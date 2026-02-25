@@ -599,9 +599,67 @@ export function SettingsContent() {
         </CardContent>
       </Card>
 
+      {/* PWA Installation */}
+      <Card className="mb-5 bg-primary/5 border-primary/20">
+        <CardHeader className="p-5 pb-3">
+          <CardTitle className="text-base flex items-center gap-2">
+            <Download className="h-5 w-5 text-primary" />
+            Instalar como App
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="p-5 pt-0 space-y-4">
+          <div className="space-y-3">
+            <div className="flex items-start gap-3">
+              <div className="flex-shrink-0 w-6 h-6 rounded-full bg-primary/20 flex items-center justify-center text-xs font-bold text-primary">
+                1
+              </div>
+              <div className="text-sm">
+                <p className="font-medium text-foreground">
+                  En Chrome/Edge (Android/PC)
+                </p>
+                <p className="text-muted-foreground text-xs mt-1">
+                  Busca el icono de 📱 o ⬇️ en la barra de direcciones y
+                  selecciona "Instalar Juan Traning"
+                </p>
+              </div>
+            </div>
+
+            <div className="flex items-start gap-3">
+              <div className="flex-shrink-0 w-6 h-6 rounded-full bg-primary/20 flex items-center justify-center text-xs font-bold text-primary">
+                2
+              </div>
+              <div className="text-sm">
+                <p className="font-medium text-foreground">En iOS (Safari)</p>
+                <p className="text-muted-foreground text-xs mt-1">
+                  Toca el botón Compartir (⬜) en Safari y selecciona "Añadir a
+                  pantalla de inicio"
+                </p>
+              </div>
+            </div>
+
+            <div className="flex items-start gap-3">
+              <div className="flex-shrink-0 w-6 h-6 rounded-full bg-primary/20 flex items-center justify-center text-xs font-bold text-primary">
+                3
+              </div>
+              <div className="text-sm">
+                <p className="font-medium text-foreground">
+                  Beneficios de la App
+                </p>
+                <ul className="text-muted-foreground text-xs mt-1 space-y-1 list-disc list-inside">
+                  <li>Acceso rápido desde tu pantalla de inicio</li>
+                  <li>Funciona 100% offline</li>
+                  <li>Diseño inmersivo sin barra del navegador</li>
+                  <li>Notificaciones de recordatorio</li>
+                </ul>
+              </div>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+
       {/* App Info */}
       <div className="text-center pt-4">
-        <p className="text-sm font-semibold text-foreground">Cuti Traning</p>
+        <p className="text-sm font-semibold text-foreground">Juan Traning</p>
         <p className="text-xs text-muted-foreground mt-1">Versión 1.0.0</p>
         <p className="text-xs text-muted-foreground mt-1">
           100% Offline • Tus datos en tu dispositivo

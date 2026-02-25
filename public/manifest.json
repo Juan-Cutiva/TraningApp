@@ -1,6 +1,6 @@
 {
-  "name": "Cuti Traning - Entrenamiento Personal",
-  "short_name": "Cuti Traning",
+  "name": "Juan Traning - Entrenamiento Personal",
+  "short_name": "Juan Traning",
   "description": "Tu entrenador personal avanzado, 100% offline. Registra entrenamientos, analiza progreso y alcanza tus objetivos.",
   "start_url": "/",
   "display": "standalone",
@@ -16,6 +16,18 @@
   ],
   "icons": [
     {
+      "src": "/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
       "src": "/icon.svg",
       "sizes": "any",
       "type": "image/svg+xml",
@@ -24,9 +36,9 @@
   ],
   "shortcuts": [
     {
-      "name": "Nuevo Entrenamiento",
-      "short_name": "Entrenar",
-      "description": "Iniciar un nuevo entrenamiento",
+      "name": "Nueva Rutina",
+      "short_name": "Rutinas",
+      "description": "Crear o ver rutinas",
       "url": "/routines"
     },
     {

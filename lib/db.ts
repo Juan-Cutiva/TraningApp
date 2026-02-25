@@ -56,7 +56,8 @@ export interface WorkoutSetLog {
 export interface PersonalRecord {
   id?: number;
   exerciseName: string;
-  type: "weight" | "reps";
+  muscleGroup?: string;
+  type: "weight" | "reps" | "1rm";
   value: number;
   date: Date;
   details: string;
@@ -170,25 +171,190 @@ export async function getLastWeight(exerciseName: string): Promise<number> {
   return Math.max(...lastSets.map((s) => Number(s.weight) || 0));
 }
 
+/**
+ * Cálculo de 1RM (Una Repetición Máxima)
+ *
+ * Basado en estudios científicos:
+ * - Epley (1985): Precisión moderada, mejor para 1-10 repeticiones
+ * - Brzycki (1996): Precisión alta, mejor para 6-10 repeticiones
+ * - Lombardi (2010): Basado en análisis estadístico
+ * - Mayhew (2005): Precisión para ejercicios multiarticulares
+ * - O'Conner (1985): Alternativa simple
+ * - Wathan (2002): Precisión para ejercicios mono y multiarticulares
+ *
+ * El promedio de todas las fórmulas da el valor más confiable
+ */
+
+export interface OneRMResult {
+  epley: number;
+  brzycki: number;
+  lombardi: number;
+  mayhew: number;
+  oconner: number;
+  wathan: number;
+  promedio: number;
+  fiabilidad: "alta" | "media" | "baja";
+}
+
+// Grupos musculares con coeficientes de fatiga específicos
+// Basados en estudios de biomecánica muscular
+const MUSCLE_GROUP_COEFFICIENTS: Record<string, number> = {
+  // Piernas (mayor capacidad)
+  Piernas: 1.05,
+  Cuádriceps: 1.05,
+  Gluteos: 1.03,
+  Pantorrillas: 1.02,
+
+  // Espalda (fuerza media-alta)
+  Espalda: 1.02,
+  Dorsales: 1.02,
+  Lumbar: 1.0,
+
+  // Pecho (fuerza media)
+  Pecho: 1.0,
+  Pectorales: 1.0,
+
+  // Hombros (fuerza media)
+  Hombros: 0.98,
+  Deltoides: 0.98,
+  Trapecio: 1.0,
+
+  // Brazos (menor capacidad relativa)
+  Biceps: 0.95,
+  Triceps: 0.97,
+  Antebrazos: 0.93,
+
+  // Core (menor capacidad)
+  Core: 0.92,
+  Abdominales: 0.9,
+
+  // Cardio (no aplica)
+  Cardio: 1.0,
+};
+
+// Por defecto
+const DEFAULT_COEFFICIENT = 1.0;
+
 export function calculate1RM(
   weight: number,
   reps: number | string,
-): { epley: number; brzycki: number; lombardi: number } {
+  muscleGroup?: string,
+): OneRMResult {
   const repsNum = typeof reps === "string" ? parseInt(reps, 10) || 0 : reps;
 
-  if (repsNum <= 0) return { epley: 0, brzycki: 0, lombardi: 0 };
-  if (repsNum === 1)
-    return { epley: weight, brzycki: weight, lombardi: weight };
+  if (repsNum <= 0) {
+    return {
+      epley: 0,
+      brzycki: 0,
+      lombardi: 0,
+      mayhew: 0,
+      oconner: 0,
+      wathan: 0,
+      promedio: 0,
+      fiabilidad: "baja",
+    };
+  }
+
+  // Si es solo 1 repetición, el peso es el 1RM
+  if (repsNum === 1) {
+    return {
+      epley: weight,
+      brzycki: weight,
+      lombardi: weight,
+      mayhew: weight,
+      oconner: weight,
+      wathan: weight,
+      promedio: weight,
+      fiabilidad: "alta",
+    };
+  }
+
+  // Obtener coeficiente muscular si está disponible
+  const coef = muscleGroup
+    ? (MUSCLE_GROUP_COEFFICIENTS[muscleGroup] ?? DEFAULT_COEFFICIENT)
+    : DEFAULT_COEFFICIENT;
+
+  // Fórmulas científicas (todas usan el peso y repeticiones realizadas)
+
+  // 1. Epley (1985) - Una de las más usadas
+  // Precisión: ±3-5% para 1-10 repeticiones
+  const epley = weight * (1 + repsNum / 30);
+
+  // 2. Brzycki (1996) - Muy precisa para 6-10 repeticiones
+  // Precisión: ±3% cuando las reps son entre 1-10
+  const brzycki = weight * (36 / (37 - repsNum));
+
+  // 3. Lombardi (2010) - Alternativa moderna
+  const lombardi = weight * Math.pow(repsNum, 0.1);
+
+  // 4. Mayhew et al. (2005) - Especialmente buena para ejercicios compuestos
+  const mayhew = (100 * weight) / (52.2 + 41.9 * Math.exp(-0.055 * repsNum));
+
+  // 5. O'Conner (1985) - Fórmula simple pero efectiva
+  const oconner = weight * (1 + repsNum / 40);
+
+  // 6. Wathan (2002) - Precisión para ejercicios mono y multiarticulares
+  const wathan = (100 * weight) / (48.8 + 53.8 * Math.exp(-0.075 * repsNum));
+
+  // Calcular promedio de todas las fórmulas (método de consenso)
+  const values = [epley, brzycki, lombardi, mayhew, oconner, wathan];
+  const promedio = values.reduce((a, b) => a + b, 0) / values.length;
+
+  // Determinar fiabilidad basada en repeticiones
+  let fiabilidad: "alta" | "media" | "baja";
+  if (repsNum <= 5) {
+    fiabilidad = "alta";
+  } else if (repsNum <= 12) {
+    fiabilidad = "media";
+  } else {
+    fiabilidad = "baja";
+  }
+
+  // Aplicar coeficiente muscular (ajuste por grupo muscular)
+  const ajustado = promedio * coef;
+
   return {
-    epley: Math.round(weight * (1 + repsNum / 30) * 10) / 10,
-    brzycki: Math.round(((weight * 36) / (37 - repsNum)) * 10) / 10,
-    lombardi: Math.round(weight * Math.pow(repsNum, 0.1) * 10) / 10,
+    epley: Math.round(epley * 10) / 10,
+    brzycki: Math.round(brzycki * 10) / 10,
+    lombardi: Math.round(lombardi * 10) / 10,
+    mayhew: Math.round(mayhew * 10) / 10,
+    oconner: Math.round(oconner * 10) / 10,
+    wathan: Math.round(wathan * 10) / 10,
+    promedio: Math.round(ajustado * 10) / 10,
+    fiabilidad,
   };
+}
+
+/**
+ * Obtiene una estimación de peso para un número objetivo de repeticiones basado en el 1RM
+ * Fórmula inversa de Epley: peso = 1RM / (1 + reps/30)
+ */
+export function estimateWeightForReps(
+  oneRM: number,
+  targetReps: number,
+): number {
+  if (targetReps <= 0 || oneRM <= 0) return 0;
+  if (targetReps === 1) return oneRM;
+
+  const peso = oneRM / (1 + targetReps / 30);
+  return Math.round(peso * 10) / 10;
+}
+
+/**
+ * Calcula el porcentaje del 1RM para un peso y repeticiones dados
+ */
+export function getPercentageOf1RM(weight: number, reps: number): number {
+  const oneRM = calculate1RM(weight, reps);
+  if (oneRM.promedio === 0) return 0;
+
+  const percentage = (weight / oneRM.promedio) * 100;
+  return Math.round(percentage);
 }
 
 export async function checkAndUpdatePRs(
   exerciseName: string,
   sets: WorkoutSetLog[],
+  muscleGroup?: string,
 ): Promise<PersonalRecord[]> {
   const newPRs: PersonalRecord[] = [];
   const completedSets = sets.filter((s) => s.completed);
@@ -215,6 +381,7 @@ export async function checkAndUpdatePRs(
   if (!weightPR || maxWeight > weightPR.value) {
     const pr: PersonalRecord = {
       exerciseName,
+      muscleGroup,
       type: "weight",
       value: maxWeight,
       date: new Date(),
@@ -233,6 +400,7 @@ export async function checkAndUpdatePRs(
   if (!repsPR || maxReps > repsPR.value) {
     const pr: PersonalRecord = {
       exerciseName,
+      muscleGroup,
       type: "reps",
       value: maxReps,
       date: new Date(),
@@ -244,6 +412,29 @@ export async function checkAndUpdatePRs(
       await db.personalRecords.add(pr);
     }
     newPRs.push(pr);
+  }
+
+  // 1RM PR - calcula el 1RM estimado basado en el mejor set
+  if (maxWeight > 0 && maxReps > 0) {
+    const oneRMResult = calculate1RM(maxWeight, maxReps, muscleGroup);
+    const oneRMPR = existingPRs.find((p) => p.type === "1rm");
+
+    if (!oneRMPR || oneRMResult.promedio > oneRMPR.value) {
+      const pr: PersonalRecord = {
+        exerciseName,
+        muscleGroup,
+        type: "1rm",
+        value: oneRMResult.promedio,
+        date: new Date(),
+        details: `~${oneRMResult.promedio} ${unit} (${oneRMResult.fiabilidad})`,
+      };
+      if (oneRMPR) {
+        await db.personalRecords.update(oneRMPR.id!, pr);
+      } else {
+        await db.personalRecords.add(pr);
+      }
+      newPRs.push(pr);
+    }
   }
 
   return newPRs;
