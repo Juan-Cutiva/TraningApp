@@ -1,33 +1,33 @@
-"use client"
+"use client";
 
-import { useState } from "react"
-import { useLiveQuery } from "dexie-react-hooks"
-import { db, type Routine, type RoutineExercise } from "@/lib/db"
-import { Card, CardContent } from "@/components/ui/card"
-import { Button } from "@/components/ui/button"
-import { Input } from "@/components/ui/input"
-import { Label } from "@/components/ui/label"
+import { useState } from "react";
+import { useLiveQuery } from "dexie-react-hooks";
+import { db, type Routine, type RoutineExercise } from "@/lib/db";
+import { Card, CardContent } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import {
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from "@/components/ui/select"
+} from "@/components/ui/select";
 import {
   Sheet,
   SheetContent,
   SheetHeader,
   SheetTitle,
   SheetFooter,
-} from "@/components/ui/sheet"
+} from "@/components/ui/sheet";
 import {
   Dialog,
   DialogContent,
   DialogHeader,
   DialogTitle,
   DialogFooter,
-} from "@/components/ui/dialog"
+} from "@/components/ui/dialog";
 import {
   Plus,
   Edit2,
@@ -35,8 +35,11 @@ import {
   Dumbbell,
   ChevronRight,
   GripVertical,
-} from "lucide-react"
-import Link from "next/link"
+  ChevronUp,
+  ChevronDown,
+  Link2,
+} from "lucide-react";
+import Link from "next/link";
 
 const DAYS = [
   "Domingo",
@@ -46,7 +49,7 @@ const DAYS = [
   "Jueves",
   "Viernes",
   "Sabado",
-]
+];
 
 const DAY_OPTIONS = [
   { value: "0", label: "Domingo" },
@@ -56,7 +59,7 @@ const DAY_OPTIONS = [
   { value: "4", label: "Jueves" },
   { value: "5", label: "Viernes" },
   { value: "6", label: "Sabado" },
-]
+];
 
 const MUSCLE_GROUPS = [
   "Pecho",
@@ -71,128 +74,169 @@ const MUSCLE_GROUPS = [
   "Antebrazos",
   "Pantorrillas",
   "Full Body",
-]
+];
 
 function generateId() {
-  return Math.random().toString(36).substring(2, 9)
+  return Math.random().toString(36).substring(2, 9);
+}
+
+// Helper to parse number or return default
+function parseNumber(value: string | number, defaultValue: number): number {
+  if (typeof value === "number") return value;
+  if (value === "") return defaultValue;
+  const parsed = parseFloat(value);
+  return isNaN(parsed) ? defaultValue : parsed;
 }
 
 export function RoutinesContent() {
-  const routines = useLiveQuery(() => db.routines.toArray())
+  const routines = useLiveQuery(() => db.routines.toArray());
 
   // Routine sheet state
-  const [sheetOpen, setSheetOpen] = useState(false)
-  const [editingRoutine, setEditingRoutine] = useState<Routine | null>(null)
-  const [routineName, setRoutineName] = useState("")
-  const [routineDay, setRoutineDay] = useState("none")
-  const [exercises, setExercises] = useState<RoutineExercise[]>([])
+  const [sheetOpen, setSheetOpen] = useState(false);
+  const [editingRoutine, setEditingRoutine] = useState<Routine | null>(null);
+  const [routineName, setRoutineName] = useState("");
+  const [routineDay, setRoutineDay] = useState("none");
+  const [exercises, setExercises] = useState<RoutineExercise[]>([]);
 
   // Exercise dialog state
-  const [exerciseDialogOpen, setExerciseDialogOpen] = useState(false)
+  const [exerciseDialogOpen, setExerciseDialogOpen] = useState(false);
   const [editingExerciseIndex, setEditingExerciseIndex] = useState<
     number | null
-  >(null)
-  const [exName, setExName] = useState("")
-  const [exMuscle, setExMuscle] = useState("Pecho")
-  const [exSets, setExSets] = useState(3)
-  const [exReps, setExReps] = useState(10)
-  const [exWeight, setExWeight] = useState(0)
-  const [exRest, setExRest] = useState(150)
+  >(null);
+  const [exName, setExName] = useState("");
+  const [exMuscle, setExMuscle] = useState("Pecho");
+  const [exSets, setExSets] = useState<string>("3");
+  const [exReps, setExReps] = useState<string | number>("10");
+  const [exWeight, setExWeight] = useState<string>("0");
+  const [exUnit, setExUnit] = useState<string>("kg");
+  const [exRest, setExRest] = useState<string>("150");
 
   function openNewRoutine() {
-    setEditingRoutine(null)
-    setRoutineName("")
-    setRoutineDay("none")
-    setExercises([])
-    setSheetOpen(true)
+    setEditingRoutine(null);
+    setRoutineName("");
+    setRoutineDay("none");
+    setExercises([]);
+    setSheetOpen(true);
   }
 
   function openEditRoutine(routine: Routine) {
-    setEditingRoutine(routine)
-    setRoutineName(routine.name)
+    setEditingRoutine(routine);
+    setRoutineName(routine.name);
     setRoutineDay(
       routine.dayOfWeek !== null && routine.dayOfWeek !== undefined
         ? String(routine.dayOfWeek)
-        : "none"
-    )
-    setExercises([...routine.exercises])
-    setSheetOpen(true)
+        : "none",
+    );
+    setExercises([...routine.exercises]);
+    setSheetOpen(true);
   }
 
   function openNewExercise() {
-    setEditingExerciseIndex(null)
-    setExName("")
-    setExMuscle("Pecho")
-    setExSets(3)
-    setExReps(10)
-    setExWeight(0)
-    setExRest(150)
-    setExerciseDialogOpen(true)
+    setEditingExerciseIndex(null);
+    setExName("");
+    setExMuscle("Pecho");
+    setExSets("3");
+    setExReps("10");
+    setExWeight("0");
+    setExUnit("kg");
+    setExRest("150");
+    setExerciseDialogOpen(true);
   }
 
   function openEditExercise(index: number) {
-    const ex = exercises[index]
-    setEditingExerciseIndex(index)
-    setExName(ex.name)
-    setExMuscle(ex.muscleGroup)
-    setExSets(ex.sets)
-    setExReps(ex.reps)
-    setExWeight(ex.targetWeight)
-    setExRest(ex.restSeconds)
-    setExerciseDialogOpen(true)
+    const ex = exercises[index];
+    setEditingExerciseIndex(index);
+    setExName(ex.name);
+    setExMuscle(ex.muscleGroup);
+    setExSets(String(ex.sets));
+    setExReps(ex.reps);
+    setExWeight(String(ex.targetWeight));
+    setExUnit(ex.unit || "kg");
+    setExRest(String(ex.restSeconds));
+    setExerciseDialogOpen(true);
   }
 
   function saveExercise() {
-    if (!exName.trim()) return
+    if (!exName.trim()) return;
+
+    const existingExercise =
+      editingExerciseIndex !== null ? exercises[editingExerciseIndex] : null;
 
     const exercise: RoutineExercise = {
-      id: editingExerciseIndex !== null ? exercises[editingExerciseIndex].id : generateId(),
+      id: existingExercise?.id || generateId(),
       name: exName.trim(),
       muscleGroup: exMuscle,
-      sets: exSets,
+      sets: parseNumber(exSets, 3),
       reps: exReps,
-      targetWeight: exWeight,
-      restSeconds: exRest,
-    }
+      targetWeight: parseNumber(exWeight, 0),
+      unit: exUnit,
+      restSeconds: parseNumber(exRest, 150),
+      supersetId: existingExercise?.supersetId,
+    };
 
     if (editingExerciseIndex !== null) {
-      const updated = [...exercises]
-      updated[editingExerciseIndex] = exercise
-      setExercises(updated)
+      const updated = [...exercises];
+      updated[editingExerciseIndex] = exercise;
+      setExercises(updated);
     } else {
-      setExercises([...exercises, exercise])
+      setExercises([...exercises, exercise]);
     }
-    setExerciseDialogOpen(false)
+    setExerciseDialogOpen(false);
   }
 
   function removeExercise(index: number) {
-    setExercises(exercises.filter((_, i) => i !== index))
+    setExercises(exercises.filter((_, i) => i !== index));
+  }
+
+  function moveExercise(index: number, direction: -1 | 1) {
+    if (index + direction < 0 || index + direction >= exercises.length) return;
+    const newEx = [...exercises];
+    const temp = newEx[index];
+    newEx[index] = newEx[index + direction];
+    newEx[index + direction] = temp;
+    setExercises(newEx);
+  }
+
+  function toggleSuperset(index: number) {
+    if (index >= exercises.length - 1) return;
+    const newEx = [...exercises];
+    const currentId = newEx[index].supersetId;
+    const nextId = newEx[index + 1].supersetId;
+
+    if (currentId && currentId === nextId) {
+      newEx[index + 1].supersetId = undefined;
+    } else {
+      const newId = currentId || nextId || generateId();
+      newEx[index].supersetId = newId;
+      newEx[index + 1].supersetId = newId;
+    }
+    setExercises(newEx);
   }
 
   async function saveRoutine() {
-    if (!routineName.trim() || exercises.length === 0) return
+    if (!routineName.trim() || exercises.length === 0) return;
 
     const data = {
       name: routineName.trim(),
       dayOfWeek: routineDay === "none" ? null : parseInt(routineDay),
       exercises,
       updatedAt: new Date(),
-    }
+    };
 
     if (editingRoutine?.id) {
-      await db.routines.update(editingRoutine.id, data)
+      await db.routines.update(editingRoutine.id, data);
     } else {
       await db.routines.add({
         ...data,
         createdAt: new Date(),
-      } as Routine)
+      } as Routine);
     }
-    setSheetOpen(false)
+    setSheetOpen(false);
   }
 
   async function handleDelete(id: number) {
-    if (confirm("Eliminar esta rutina?")) {
-      await db.routines.delete(id)
+    if (confirm("¿Eliminar esta rutina?")) {
+      await db.routines.delete(id);
     }
   }
 
@@ -203,7 +247,7 @@ export function RoutinesContent() {
         <Button
           onClick={openNewRoutine}
           size="sm"
-          className="gap-1.5 rounded-xl"
+          className="gap-1.5 rounded-xl px-4"
         >
           <Plus className="h-4 w-4" />
           Nueva
@@ -213,14 +257,16 @@ export function RoutinesContent() {
       {!routines || routines.length === 0 ? (
         <Card>
           <CardContent className="flex flex-col items-center py-12 text-center">
-            <Dumbbell className="mb-4 h-12 w-12 text-muted-foreground/50" />
-            <p className="text-lg font-medium text-foreground">
+            <div className="h-16 w-16 rounded-full bg-primary/10 flex items-center justify-center mb-4">
+              <Dumbbell className="h-8 w-8 text-primary" />
+            </div>
+            <p className="text-lg font-semibold text-foreground">
               Sin rutinas creadas
             </p>
-            <p className="mt-1 text-sm text-muted-foreground">
+            <p className="text-sm text-muted-foreground mt-1 max-w-[250px]">
               Crea tu primera rutina para empezar a entrenar
             </p>
-            <Button onClick={openNewRoutine} className="mt-4 gap-1.5">
+            <Button onClick={openNewRoutine} className="mt-5 gap-1.5 px-6">
               <Plus className="h-4 w-4" />
               Crear Rutina
             </Button>
@@ -229,25 +275,28 @@ export function RoutinesContent() {
       ) : (
         <div className="flex flex-col gap-3">
           {routines.map((routine) => (
-            <Card key={routine.id} className="overflow-hidden">
+            <Card
+              key={routine.id}
+              className="overflow-hidden hover:shadow-md transition-shadow"
+            >
               <CardContent className="p-0">
                 <div className="flex items-center">
                   <Link
                     href={`/workout/${routine.id}`}
-                    className="flex flex-1 items-center gap-3 p-4"
+                    className="flex flex-1 items-center gap-4 p-4"
                   >
-                    <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-primary/10">
-                      <Dumbbell className="h-5 w-5 text-primary" />
+                    <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-primary/10">
+                      <Dumbbell className="h-6 w-6 text-primary" />
                     </div>
                     <div className="flex-1 min-w-0">
-                      <p className="font-semibold text-foreground truncate">
+                      <p className="font-bold text-foreground text-lg">
                         {routine.name}
                       </p>
-                      <p className="text-xs text-muted-foreground">
+                      <p className="text-sm text-muted-foreground">
                         {routine.dayOfWeek !== null
                           ? DAYS[routine.dayOfWeek]
                           : "Sin asignar"}{" "}
-                        &middot; {routine.exercises.length} ejercicios
+                        • {routine.exercises.length} ejercicios
                       </p>
                     </div>
                     <ChevronRight className="h-5 w-5 text-muted-foreground/50" />
@@ -256,7 +305,7 @@ export function RoutinesContent() {
                     <Button
                       variant="ghost"
                       size="icon"
-                      className="h-8 w-8"
+                      className="h-9 w-9"
                       onClick={() => openEditRoutine(routine)}
                     >
                       <Edit2 className="h-4 w-4" />
@@ -264,7 +313,7 @@ export function RoutinesContent() {
                     <Button
                       variant="ghost"
                       size="icon"
-                      className="h-8 w-8 text-destructive"
+                      className="h-9 w-9 text-destructive"
                       onClick={() => handleDelete(routine.id!)}
                     >
                       <Trash2 className="h-4 w-4" />
@@ -279,30 +328,35 @@ export function RoutinesContent() {
 
       {/* Routine Sheet (Bottom) */}
       <Sheet open={sheetOpen} onOpenChange={setSheetOpen}>
-        <SheetContent side="bottom" className="max-h-[90dvh] overflow-auto rounded-t-2xl">
-          <SheetHeader>
-            <SheetTitle>
+        <SheetContent
+          side="bottom"
+          className="max-h-[90dvh] overflow-auto rounded-t-2xl"
+        >
+          <SheetHeader className="px-4 pt-4 pb-2">
+            <SheetTitle className="text-xl">
               {editingRoutine ? "Editar Rutina" : "Nueva Rutina"}
             </SheetTitle>
           </SheetHeader>
 
-          <div className="flex flex-col gap-4 px-4">
+          <div className="flex flex-col gap-5 px-4 py-2">
             <div>
-              <Label htmlFor="routine-name">Nombre</Label>
+              <Label htmlFor="routine-name" className="text-sm font-medium">
+                Nombre de la rutina
+              </Label>
               <Input
                 id="routine-name"
                 value={routineName}
                 onChange={(e) => setRoutineName(e.target.value)}
                 placeholder="Ej: Push Day, Piernas..."
-                className="mt-1.5"
+                className="mt-1.5 h-11"
               />
             </div>
 
             <div>
-              <Label>Dia de la semana</Label>
+              <Label className="text-sm font-medium">Día de la semana</Label>
               <Select value={routineDay} onValueChange={setRoutineDay}>
-                <SelectTrigger className="mt-1.5">
-                  <SelectValue placeholder="Seleccionar dia" />
+                <SelectTrigger className="mt-1.5 h-11">
+                  <SelectValue placeholder="Seleccionar día" />
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="none">Sin asignar</SelectItem>
@@ -317,8 +371,8 @@ export function RoutinesContent() {
 
             {/* Exercises List */}
             <div>
-              <div className="flex items-center justify-between mb-2">
-                <Label className="text-base">Ejercicios</Label>
+              <div className="flex items-center justify-between mb-3">
+                <Label className="text-base font-semibold">Ejercicios</Label>
                 <Button
                   variant="outline"
                   size="sm"
@@ -331,54 +385,106 @@ export function RoutinesContent() {
               </div>
 
               {exercises.length === 0 ? (
-                <div className="rounded-lg border border-dashed border-muted-foreground/30 py-8 text-center">
-                  <Dumbbell className="mx-auto mb-2 h-8 w-8 text-muted-foreground/40" />
+                <div className="rounded-xl border-2 border-dashed border-muted-foreground/20 py-10 text-center">
+                  <Dumbbell className="mx-auto mb-3 h-10 w-10 text-muted-foreground/30" />
                   <p className="text-sm text-muted-foreground">
                     Agrega ejercicios a tu rutina
                   </p>
                 </div>
               ) : (
                 <div className="flex flex-col gap-2">
-                  {exercises.map((ex, i) => (
-                    <div
-                      key={ex.id}
-                      className="flex items-center gap-2 rounded-lg border border-border bg-card p-3"
-                    >
-                      <GripVertical className="h-4 w-4 text-muted-foreground/40 shrink-0" />
-                      <button
-                        className="flex flex-1 flex-col text-left min-w-0"
-                        onClick={() => openEditExercise(i)}
-                      >
-                        <span className="text-sm font-medium text-foreground truncate">
-                          {ex.name || "Sin nombre"}
-                        </span>
-                        <span className="text-xs text-muted-foreground">
-                          {ex.muscleGroup} &middot; {ex.sets}x{ex.reps}
-                          {ex.targetWeight > 0
-                            ? ` @ ${ex.targetWeight}kg`
-                            : ""}
-                        </span>
-                      </button>
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        className="h-7 w-7 text-destructive shrink-0"
-                        onClick={() => removeExercise(i)}
-                      >
-                        <Trash2 className="h-3.5 w-3.5" />
-                      </Button>
-                    </div>
-                  ))}
+                  {exercises.map((ex, i) => {
+                    const isLinkedToNext =
+                      i < exercises.length - 1 &&
+                      ex.supersetId &&
+                      ex.supersetId === exercises[i + 1].supersetId;
+
+                    return (
+                      <div key={ex.id} className="relative">
+                        <div
+                          className={`flex items-center gap-2 rounded-xl border p-3 transition-colors
+                            ${ex.supersetId ? "bg-primary/5 border-primary/30" : "bg-card border-border"}
+                          `}
+                        >
+                          <div className="flex flex-col items-center justify-center shrink-0">
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="h-7 w-7 text-muted-foreground/60 p-0"
+                              onClick={() => moveExercise(i, -1)}
+                              disabled={i === 0}
+                            >
+                              <ChevronUp className="h-4 w-4" />
+                            </Button>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="h-7 w-7 text-muted-foreground/60 p-0"
+                              onClick={() => moveExercise(i, 1)}
+                              disabled={i === exercises.length - 1}
+                            >
+                              <ChevronDown className="h-4 w-4" />
+                            </Button>
+                          </div>
+                          <button
+                            className="flex flex-1 flex-col text-left min-w-0 px-2"
+                            onClick={() => openEditExercise(i)}
+                          >
+                            <span className="font-semibold text-foreground flex items-center gap-2">
+                              {ex.name || "Sin nombre"}
+                              {ex.supersetId && (
+                                <span className="text-[10px] font-bold bg-primary/10 text-primary px-1.5 py-0.5 rounded">
+                                  SS
+                                </span>
+                              )}
+                            </span>
+                            <span className="text-sm text-muted-foreground">
+                              {ex.muscleGroup} • {ex.sets}×{ex.reps}
+                              {ex.targetWeight > 0
+                                ? ` @ ${ex.targetWeight}${ex.unit || "kg"}`
+                                : ""}
+                            </span>
+                          </button>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-8 w-8 text-destructive shrink-0"
+                            onClick={() => removeExercise(i)}
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </Button>
+                        </div>
+
+                        {i < exercises.length - 1 && (
+                          <div className="flex justify-center -my-2 relative z-10">
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className={`h-7 w-7 rounded-full border-2 bg-background shadow-sm transition-colors ${
+                                isLinkedToNext
+                                  ? "text-primary border-primary bg-primary/10 hover:bg-primary/20"
+                                  : "text-muted-foreground/40 border-border hover:text-foreground"
+                              }`}
+                              onClick={() => toggleSuperset(i)}
+                              title="Vincular como Súper Serie"
+                            >
+                              <Link2 className="h-3.5 w-3.5" />
+                            </Button>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
                 </div>
               )}
             </div>
           </div>
 
-          <SheetFooter>
+          <SheetFooter className="px-4 pb-6 pt-4">
             <Button
               onClick={saveRoutine}
               disabled={!routineName.trim() || exercises.length === 0}
-              className="w-full rounded-xl py-6 text-base font-semibold"
+              className="w-full rounded-xl py-6 text-lg font-semibold"
               size="lg"
             >
               {editingRoutine ? "Guardar Cambios" : "Crear Rutina"}
@@ -389,30 +495,32 @@ export function RoutinesContent() {
 
       {/* Exercise Dialog */}
       <Dialog open={exerciseDialogOpen} onOpenChange={setExerciseDialogOpen}>
-        <DialogContent className="max-w-[calc(100%-2rem)]">
+        <DialogContent className="max-w-[calc(100%-2rem)] rounded-xl">
           <DialogHeader>
-            <DialogTitle>
+            <DialogTitle className="text-lg">
               {editingExerciseIndex !== null
                 ? "Editar Ejercicio"
                 : "Nuevo Ejercicio"}
             </DialogTitle>
           </DialogHeader>
 
-          <div className="flex flex-col gap-3">
+          <div className="flex flex-col gap-4 py-2">
             <div>
-              <Label>Nombre del ejercicio</Label>
+              <Label className="text-sm font-medium">
+                Nombre del ejercicio
+              </Label>
               <Input
                 value={exName}
                 onChange={(e) => setExName(e.target.value)}
                 placeholder="Ej: Press banca, Sentadilla..."
-                className="mt-1"
+                className="mt-1 h-11"
               />
             </div>
 
             <div>
-              <Label>Grupo muscular</Label>
+              <Label className="text-sm font-medium">Grupo muscular</Label>
               <Select value={exMuscle} onValueChange={setExMuscle}>
-                <SelectTrigger className="mt-1">
+                <SelectTrigger className="mt-1 h-11">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
@@ -429,11 +537,12 @@ export function RoutinesContent() {
               <div>
                 <Label className="text-xs text-muted-foreground">Series</Label>
                 <Input
-                  type="number"
-                  min={1}
+                  type="text"
+                  inputMode="numeric"
                   value={exSets}
-                  onChange={(e) => setExSets(parseInt(e.target.value) || 1)}
-                  className="mt-1"
+                  onChange={(e) => setExSets(e.target.value)}
+                  className="mt-1 h-11"
+                  placeholder="3"
                 />
               </div>
               <div>
@@ -441,42 +550,48 @@ export function RoutinesContent() {
                   Repeticiones
                 </Label>
                 <Input
-                  type="number"
-                  min={1}
+                  type="text"
                   value={exReps}
-                  onChange={(e) => setExReps(parseInt(e.target.value) || 1)}
-                  className="mt-1"
+                  onChange={(e) => setExReps(e.target.value)}
+                  className="mt-1 h-11"
+                  placeholder="10 o 8-12"
                 />
               </div>
               <div>
                 <Label className="text-xs text-muted-foreground">
-                  Peso (kg)
+                  Peso ({exUnit})
                 </Label>
-                <Input
-                  type="number"
-                  min={0}
-                  step={0.5}
-                  value={exWeight}
-                  onChange={(e) =>
-                    setExWeight(parseFloat(e.target.value) || 0)
-                  }
-                  className="mt-1"
-                />
+                <div className="flex mt-1 items-center gap-1">
+                  <Input
+                    type="text"
+                    inputMode="decimal"
+                    value={exWeight}
+                    onChange={(e) => setExWeight(e.target.value)}
+                    className="h-11"
+                    placeholder="0"
+                  />
+                </div>
               </div>
             </div>
 
             <div>
-              <Label className="text-xs text-muted-foreground">
-                Descanso (segundos)
-              </Label>
-              <Input
-                type="number"
-                min={30}
-                step={15}
-                value={exRest}
-                onChange={(e) => setExRest(parseInt(e.target.value) || 150)}
-                className="mt-1"
-              />
+              <Label className="text-sm font-medium">Descanso (segundos)</Label>
+              <Select
+                value={String(exRest)}
+                onValueChange={(v) => setExRest(v)}
+              >
+                <SelectTrigger className="mt-1 h-11">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="60">60s (1 min)</SelectItem>
+                  <SelectItem value="90">90s (1.5 min)</SelectItem>
+                  <SelectItem value="120">120s (2 min)</SelectItem>
+                  <SelectItem value="150">150s (2.5 min)</SelectItem>
+                  <SelectItem value="180">180s (3 min)</SelectItem>
+                  <SelectItem value="240">240s (4 min)</SelectItem>
+                </SelectContent>
+              </Select>
             </div>
           </div>
 
@@ -484,15 +599,20 @@ export function RoutinesContent() {
             <Button
               variant="outline"
               onClick={() => setExerciseDialogOpen(false)}
+              className="h-11"
             >
               Cancelar
             </Button>
-            <Button onClick={saveExercise} disabled={!exName.trim()}>
+            <Button
+              onClick={saveExercise}
+              disabled={!exName.trim()}
+              className="h-11 px-6"
+            >
               {editingExerciseIndex !== null ? "Guardar" : "Agregar"}
             </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
     </div>
-  )
+  );
 }

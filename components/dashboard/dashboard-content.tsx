@@ -1,106 +1,81 @@
-"use client"
+"use client";
 
-import { useLiveQuery } from "dexie-react-hooks"
-import { db, getTodayRoutine, calculate1RM } from "@/lib/db"
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
-import { Button } from "@/components/ui/button"
-import { Progress } from "@/components/ui/progress"
-import Link from "next/link"
+import { useLiveQuery } from "dexie-react-hooks";
+import { db, getTodayRoutine } from "@/lib/db";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
+import { Progress } from "@/components/ui/progress";
+import Link from "next/link";
 import {
   Dumbbell,
-  TrendingUp,
   Flame,
   Clock,
   ChevronRight,
-  Zap,
-  Activity,
-} from "lucide-react"
-import {
-  startOfWeek,
-  endOfWeek,
-  startOfMonth,
-  endOfMonth,
-  isWithinInterval,
-  differenceInDays,
-  format,
-} from "date-fns"
-import { es } from "date-fns/locale"
-import { SmartSuggestions } from "./smart-suggestions"
+  Trophy,
+  Scale,
+  TrendingUp,
+  TrendingDown,
+  Target,
+  Plus,
+} from "lucide-react";
+import { startOfWeek, endOfWeek, isWithinInterval, format } from "date-fns";
+import { es } from "date-fns/locale";
+import { MuscleActivity } from "./muscle-activity";
 
 export function DashboardContent() {
-  const todayRoutine = useLiveQuery(() => getTodayRoutine())
+  const todayRoutine = useLiveQuery(() => getTodayRoutine());
   const workoutLogs = useLiveQuery(() =>
-    db.workoutLogs.where("completed").equals(1).reverse().sortBy("date")
-  )
-  const routines = useLiveQuery(() => db.routines.toArray())
-  const goals = useLiveQuery(() =>
-    db.goals.where("completed").equals(0).toArray()
-  )
-  const personalRecords = useLiveQuery(() => db.personalRecords.toArray())
+    db.workoutLogs.where("completed").equals(1).reverse().sortBy("date"),
+  );
+  const routines = useLiveQuery(() => db.routines.toArray());
+  const personalRecords = useLiveQuery(() => db.personalRecords.toArray());
 
-  const now = new Date()
-  const weekStart = startOfWeek(now, { weekStartsOn: 1 })
-  const weekEnd = endOfWeek(now, { weekStartsOn: 1 })
-  const monthStart = startOfMonth(now)
-  const monthEnd = endOfMonth(now)
+  // Body weight data
+  const weightLogs = useLiveQuery(() =>
+    db.bodyWeight.orderBy("date").reverse().toArray(),
+  );
+  const weightGoal = useLiveQuery(() =>
+    db.weightGoals.orderBy("createdAt").reverse().first(),
+  );
+
+  const now = new Date();
+  const weekStart = startOfWeek(now, { weekStartsOn: 1 });
+  const weekEnd = endOfWeek(now, { weekStartsOn: 1 });
 
   const weekLogs =
     workoutLogs?.filter((l) =>
-      isWithinInterval(new Date(l.date), { start: weekStart, end: weekEnd })
-    ) ?? []
-  const monthLogs =
-    workoutLogs?.filter((l) =>
-      isWithinInterval(new Date(l.date), { start: monthStart, end: monthEnd })
-    ) ?? []
+      isWithinInterval(new Date(l.date), { start: weekStart, end: weekEnd }),
+    ) ?? [];
 
-  const weeklyVolume = weekLogs.reduce((s, l) => s + l.totalVolume, 0)
-  const weeklyDuration = weekLogs.reduce((s, l) => s + l.duration, 0)
-  const monthlyVolume = monthLogs.reduce((s, l) => s + l.totalVolume, 0)
+  const weeklyDuration = weekLogs.reduce((s, l) => s + l.duration, 0);
 
   // Consistency: workouts this week / routines assigned to days
-  const assignedDays = routines?.filter((r) => r.dayOfWeek !== null).length ?? 0
+  const assignedDays =
+    routines?.filter((r) => r.dayOfWeek !== null).length ?? 0;
   const consistency =
     assignedDays > 0
       ? Math.min(100, Math.round((weekLogs.length / assignedDays) * 100))
-      : 0
+      : 0;
 
-  // Fatigue estimate based on weekly volume trend
-  const prevWeekStart = new Date(weekStart)
-  prevWeekStart.setDate(prevWeekStart.getDate() - 7)
-  const prevWeekLogs =
-    workoutLogs?.filter((l) =>
-      isWithinInterval(new Date(l.date), {
-        start: prevWeekStart,
-        end: weekStart,
-      })
-    ) ?? []
-  const prevWeekVolume = prevWeekLogs.reduce((s, l) => s + l.totalVolume, 0)
-  const volumeIncrease =
-    prevWeekVolume > 0
-      ? ((weeklyVolume - prevWeekVolume) / prevWeekVolume) * 100
-      : 0
+  const dayName = format(now, "EEEE", { locale: es });
 
-  let fatigueLevel: "Baja" | "Media" | "Alta" = "Baja"
-  let fatigueColor = "text-success"
-  if (volumeIncrease > 20 || weekLogs.length > 5) {
-    fatigueLevel = "Alta"
-    fatigueColor = "text-destructive"
-  } else if (volumeIncrease > 10 || weekLogs.length > 4) {
-    fatigueLevel = "Media"
-    fatigueColor = "text-warning"
-  }
+  // Body weight calculations
+  const latestWeight = weightLogs?.[0]?.weight;
+  const firstWeight = weightLogs?.[weightLogs.length - 1]?.weight;
+  const weightChange =
+    latestWeight && firstWeight ? latestWeight - firstWeight : 0;
 
-  // IPP (Indice Personal de Progreso) - simplified composite score
-  const recentPRs =
-    personalRecords?.filter(
-      (p) => differenceInDays(now, new Date(p.date)) < 30
-    ).length ?? 0
-  const ipp = Math.min(
-    100,
-    Math.round(consistency * 0.4 + Math.min(recentPRs * 10, 30) + (weeklyVolume > 0 ? 30 : 0))
-  )
-
-  const dayName = format(now, "EEEE", { locale: es })
+  // Goal progress
+  const goalProgress =
+    weightGoal && latestWeight
+      ? weightGoal.targetWeight > weightGoal.startWeight
+        ? ((latestWeight - weightGoal.startWeight) /
+            (weightGoal.targetWeight - weightGoal.startWeight)) *
+          100
+        : ((weightGoal.startWeight - latestWeight) /
+            (weightGoal.startWeight - weightGoal.targetWeight)) *
+          100
+      : null;
 
   return (
     <div className="mx-auto max-w-lg px-4 pt-6">
@@ -110,28 +85,31 @@ export function DashboardContent() {
           {dayName}, {format(now, "d MMM yyyy", { locale: es })}
         </p>
         <h1 className="mt-1 text-2xl font-bold tracking-tight text-foreground">
-          Juan Traning
+          Cuti Traning
         </h1>
       </div>
 
       {/* Today's Routine CTA */}
-      <Card className="mb-4 border-primary/20 bg-primary/5">
-        <CardContent className="p-4">
+      <Card className="mb-5 border-primary/20 bg-gradient-to-br from-primary/10 to-primary/5">
+        <CardContent className="p-5">
           {todayRoutine ? (
             <div className="flex items-center justify-between">
-              <div>
-                <p className="text-xs font-medium text-primary uppercase tracking-wide">
+              <div className="flex-1">
+                <p className="text-xs font-bold text-primary uppercase tracking-wider">
                   Rutina de hoy
                 </p>
-                <p className="mt-1 text-lg font-bold text-foreground">
+                <p className="mt-1.5 text-xl font-bold text-foreground">
                   {todayRoutine.name}
                 </p>
-                <p className="text-sm text-muted-foreground">
+                <p className="text-sm text-muted-foreground mt-1">
                   {todayRoutine.exercises.length} ejercicios
                 </p>
               </div>
               <Link href={`/workout/${todayRoutine.id}`}>
-                <Button size="lg" className="gap-2 rounded-xl font-semibold">
+                <Button
+                  size="lg"
+                  className="gap-2 rounded-xl font-semibold h-12 px-6"
+                >
                   <Dumbbell className="h-5 w-5" />
                   Comenzar
                 </Button>
@@ -140,12 +118,16 @@ export function DashboardContent() {
           ) : (
             <div className="flex items-center justify-between">
               <div>
-                <p className="text-sm text-muted-foreground">
+                <p className="text-base text-muted-foreground">
                   No tienes rutina asignada para hoy
                 </p>
               </div>
               <Link href="/routines">
-                <Button variant="outline" size="sm" className="gap-1">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="gap-1 rounded-lg"
+                >
                   Ver rutinas
                   <ChevronRight className="h-4 w-4" />
                 </Button>
@@ -155,191 +137,194 @@ export function DashboardContent() {
         </CardContent>
       </Card>
 
-      {/* Stats Grid */}
-      <div className="mb-4 grid grid-cols-2 gap-3">
-        <Card>
-          <CardContent className="p-4">
-            <div className="flex items-center gap-2 text-muted-foreground">
-              <TrendingUp className="h-4 w-4 text-primary" />
-              <span className="text-xs font-medium">Vol. Semanal</span>
+      {/* Stats Grid - 2 columnas */}
+      <div className="grid grid-cols-2 gap-4 mb-4">
+        <Card className="bg-chart-2/10 border-chart-2/20">
+          <CardContent className="p-5 flex flex-col items-center justify-center text-center gap-1">
+            <div className="flex items-center gap-2 mb-2">
+              <Clock className="h-5 w-5 text-chart-2" />
+              <span className="text-xs font-bold text-chart-2 uppercase tracking-wide">
+                Tiempo
+              </span>
             </div>
-            <p className="mt-2 text-xl font-bold text-foreground">
-              {weeklyVolume > 1000
-                ? `${(weeklyVolume / 1000).toFixed(1)}t`
-                : `${weeklyVolume}kg`}
-            </p>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardContent className="p-4">
-            <div className="flex items-center gap-2 text-muted-foreground">
-              <Clock className="h-4 w-4 text-chart-2" />
-              <span className="text-xs font-medium">Tiempo Semanal</span>
-            </div>
-            <p className="mt-2 text-xl font-bold text-foreground">
+            <p className="text-3xl font-bold text-foreground">
               {weeklyDuration > 3600
                 ? `${(weeklyDuration / 3600).toFixed(1)}h`
                 : `${Math.round(weeklyDuration / 60)}m`}
             </p>
+            <p className="text-xs text-muted-foreground">esta semana</p>
           </CardContent>
         </Card>
 
-        <Card>
-          <CardContent className="p-4">
-            <div className="flex items-center gap-2 text-muted-foreground">
-              <Flame className="h-4 w-4 text-chart-3" />
-              <span className="text-xs font-medium">Consistencia</span>
+        <Card className="bg-chart-3/10 border-chart-3/20">
+          <CardContent className="p-5 flex flex-col items-center justify-center text-center gap-1">
+            <div className="flex items-center gap-2 mb-2">
+              <Flame className="h-5 w-5 text-chart-3" />
+              <span className="text-xs font-bold text-chart-3 uppercase tracking-wide">
+                Consistencia
+              </span>
             </div>
-            <p className="mt-2 text-xl font-bold text-foreground">
-              {consistency}%
-            </p>
-            <Progress value={consistency} className="mt-2 h-1.5" />
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardContent className="p-4">
-            <div className="flex items-center gap-2 text-muted-foreground">
-              <Activity className={`h-4 w-4 ${fatigueColor}`} />
-              <span className="text-xs font-medium">Fatiga</span>
-            </div>
-            <p className={`mt-2 text-xl font-bold ${fatigueColor}`}>
-              {fatigueLevel}
-            </p>
+            <p className="text-3xl font-bold text-foreground">{consistency}%</p>
+            <Progress value={consistency} className="h-2 w-full mt-1" />
           </CardContent>
         </Card>
       </div>
 
-      {/* IPP */}
-      <Card className="mb-4">
-        <CardContent className="p-4">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <Zap className="h-5 w-5 text-primary" />
-              <div>
-                <p className="text-sm font-semibold text-foreground">
-                  Indice Personal de Progreso
-                </p>
-                <p className="text-xs text-muted-foreground">
-                  Fuerza + Volumen + Consistencia
-                </p>
+      {/* Weight & Goal Card */}
+      {latestWeight ? (
+        <Card className="mb-4 bg-gradient-to-br from-chart-4/10 to-chart-4/5 border-chart-4/30">
+          <CardContent className="p-5">
+            <div className="flex items-center justify-between mb-3">
+              <div className="flex items-center gap-2">
+                <Scale className="h-5 w-5 text-chart-4" />
+                <span className="text-sm font-bold text-chart-4 uppercase tracking-wide">
+                  Peso Corporal
+                </span>
               </div>
-            </div>
-            <span className="text-2xl font-bold text-primary">{ipp}</span>
-          </div>
-          <Progress value={ipp} className="mt-3 h-2" />
-        </CardContent>
-      </Card>
-
-      {/* Smart Progression Suggestions */}
-      <SmartSuggestions />
-
-      {/* Goals Preview */}
-      {goals && goals.length > 0 && (
-        <Card className="mb-4">
-          <CardHeader className="p-4 pb-2">
-            <div className="flex items-center justify-between">
-              <CardTitle className="text-sm font-semibold">
-                Objetivos activos
-              </CardTitle>
-              <Link
-                href="/goals"
-                className="text-xs text-primary font-medium"
-              >
-                Ver todos
+              <Link href="/body-weight">
+                <Button variant="ghost" size="sm" className="text-xs h-7 gap-1">
+                  Ver más <ChevronRight className="h-3 w-3" />
+                </Button>
               </Link>
             </div>
-          </CardHeader>
-          <CardContent className="px-4 pb-4">
-            {goals.slice(0, 3).map((goal) => {
-              const progress =
-                goal.targetValue > goal.startValue
-                  ? Math.round(
-                    ((goal.currentValue - goal.startValue) /
-                      (goal.targetValue - goal.startValue)) *
-                    100
-                  )
-                  : 0
-              return (
-                <div key={goal.id} className="mb-3 last:mb-0">
-                  <div className="flex items-center justify-between text-sm">
-                    <span className="text-foreground">{goal.description}</span>
-                    <span className="font-medium text-primary">
-                      {Math.max(0, Math.min(100, progress))}%
+
+            {/* Current Weight */}
+            <div className="flex items-end justify-between mb-3">
+              <div>
+                <p className="text-3xl font-bold text-foreground">
+                  {latestWeight.toFixed(1)}
+                  <span className="text-lg font-normal text-muted-foreground ml-1">
+                    kg
+                  </span>
+                </p>
+                {weightLogs && weightLogs.length > 1 && (
+                  <div
+                    className={`flex items-center gap-1 text-xs font-medium mt-1 ${
+                      weightChange > 0
+                        ? "text-chart-2"
+                        : weightChange < 0
+                          ? "text-chart-3"
+                          : "text-muted-foreground"
+                    }`}
+                  >
+                    {weightChange > 0 ? (
+                      <TrendingUp className="h-3 w-3" />
+                    ) : weightChange < 0 ? (
+                      <TrendingDown className="h-3 w-3" />
+                    ) : null}
+                    <span>
+                      {weightChange > 0 ? "+" : ""}
+                      {weightChange.toFixed(1)} kg
                     </span>
                   </div>
-                  <Progress
-                    value={Math.max(0, Math.min(100, progress))}
-                    className="mt-1 h-1.5"
-                  />
-                </div>
-              )
-            })}
-          </CardContent>
-        </Card>
-      )}
-
-      {/* Monthly volume */}
-      <Card className="mb-4">
-        <CardContent className="p-4">
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="text-xs font-medium text-muted-foreground">
-                Vol. Mensual
-              </p>
-              <p className="mt-1 text-lg font-bold text-foreground">
-                {monthlyVolume > 1000
-                  ? `${(monthlyVolume / 1000).toFixed(1)}t`
-                  : `${monthlyVolume}kg`}
-              </p>
+                )}
+              </div>
             </div>
-            <div className="text-right">
-              <p className="text-xs font-medium text-muted-foreground">
-                Sesiones este mes
-              </p>
-              <p className="mt-1 text-lg font-bold text-foreground">
-                {monthLogs.length}
-              </p>
-            </div>
-          </div>
-        </CardContent>
-      </Card>
 
-      {/* Recent PRs */}
-      {personalRecords && personalRecords.length > 0 && (
-        <Card className="mb-6">
-          <CardHeader className="p-4 pb-2">
-            <CardTitle className="text-sm font-semibold">
-              Records Personales Recientes
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="px-4 pb-4">
-            {personalRecords
-              .sort(
-                (a, b) =>
-                  new Date(b.date).getTime() - new Date(a.date).getTime()
-              )
-              .slice(0, 5)
-              .map((pr) => (
-                <div
-                  key={pr.id}
-                  className="flex items-center justify-between py-2 border-b border-border last:border-0"
-                >
-                  <div>
-                    <p className="text-sm font-medium text-foreground">
-                      {pr.exerciseName}
-                    </p>
-                    <p className="text-xs text-muted-foreground">{pr.type}</p>
+            {/* Goal Progress */}
+            {weightGoal && goalProgress !== null && (
+              <div className="mt-3 pt-3 border-t border-border/30">
+                <div className="flex items-center justify-between mb-2">
+                  <div className="flex items-center gap-2">
+                    <Target className="h-4 w-4 text-chart-3" />
+                    <span className="text-sm font-medium text-chart-3">
+                      Meta: {weightGoal.targetWeight} kg
+                    </span>
                   </div>
-                  <span className="text-sm font-bold text-accent">
-                    {pr.details}
+                  <span className="text-sm font-bold text-chart-3">
+                    {Math.min(100, Math.max(0, goalProgress)).toFixed(0)}%
                   </span>
                 </div>
-              ))}
+                <Progress
+                  value={Math.min(100, Math.max(0, goalProgress))}
+                  className="h-2 bg-chart-3/20"
+                />
+                <p className="text-xs text-muted-foreground mt-1">
+                  {latestWeight > weightGoal.targetWeight
+                    ? `Te faltan ${(latestWeight - weightGoal.targetWeight).toFixed(1)} kg`
+                    : `Te faltan ${(weightGoal.targetWeight - latestWeight).toFixed(1)} kg`}
+                </p>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      ) : (
+        <Card className="mb-4 bg-gradient-to-br from-chart-4/10 to-chart-4/5 border-chart-4/30">
+          <CardContent className="p-5">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <Scale className="h-5 w-5 text-chart-4" />
+                <span className="text-sm font-bold text-chart-4 uppercase tracking-wide">
+                  Peso Corporal
+                </span>
+              </div>
+              <Link href="/body-weight">
+                <Button size="sm" className="gap-1">
+                  <Plus className="h-4 w-4" />
+                  Agregar
+                </Button>
+              </Link>
+            </div>
           </CardContent>
         </Card>
       )}
+
+      <MuscleActivity />
+
+      {/* PRs Section */}
+      <Card className="mb-4">
+        <CardHeader className="p-4 pb-2 flex flex-row items-center justify-between">
+          <CardTitle className="text-base font-semibold flex items-center gap-2">
+            <Trophy className="h-5 w-5 text-yellow-500" />
+            Records Personales
+          </CardTitle>
+          <Link href="/personal-records">
+            <Button variant="ghost" size="sm" className="text-xs h-7 gap-1">
+              Ver todos <ChevronRight className="h-3 w-3" />
+            </Button>
+          </Link>
+        </CardHeader>
+        <CardContent className="px-4 pb-4">
+          {personalRecords && personalRecords.length > 0 ? (
+            <div className="space-y-2">
+              {personalRecords
+                .filter((pr) => pr.type === "weight")
+                .sort(
+                  (a, b) =>
+                    new Date(b.date).getTime() - new Date(a.date).getTime(),
+                )
+                .slice(0, 5)
+                .map((pr) => (
+                  <div
+                    key={pr.id}
+                    className="flex items-center justify-between py-2 px-3 rounded-lg bg-muted/50"
+                  >
+                    <div className="flex items-center gap-3">
+                      <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-yellow-500/10">
+                        <TrendingUp className="h-4 w-4 text-yellow-500" />
+                      </div>
+                      <div>
+                        <p className="font-medium text-foreground text-sm">
+                          {pr.exerciseName}
+                        </p>
+                      </div>
+                    </div>
+                    <span className="text-lg font-bold text-accent">
+                      {pr.details}
+                    </span>
+                  </div>
+                ))}
+            </div>
+          ) : (
+            <div className="text-center py-4">
+              <Trophy className="h-8 w-8 mx-auto text-muted-foreground/30 mb-2" />
+              <p className="text-sm text-muted-foreground">
+                Sin records aún. ¡Entrena para establecerlos!
+              </p>
+            </div>
+          )}
+        </CardContent>
+      </Card>
     </div>
-  )
+  );
 }

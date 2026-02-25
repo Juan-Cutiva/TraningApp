@@ -1,7 +1,7 @@
-"use client"
+"use client";
 
-import { useState, useEffect, useCallback, useRef } from "react"
-import { useLiveQuery } from "dexie-react-hooks"
+import { useState, useEffect, useRef, useMemo } from "react";
+import { useLiveQuery } from "dexie-react-hooks";
 import {
   db,
   getLastWeight,
@@ -9,11 +9,25 @@ import {
   type WorkoutExerciseLog,
   type WorkoutSetLog,
   type WorkoutLog,
-} from "@/lib/db"
-import { Button } from "@/components/ui/button"
-import { Card, CardContent } from "@/components/ui/card"
-import { Input } from "@/components/ui/input"
-import { Progress } from "@/components/ui/progress"
+} from "@/lib/db";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
+import { Progress } from "@/components/ui/progress";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogFooter,
+} from "@/components/ui/dialog";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import {
   ArrowLeft,
   Check,
@@ -25,35 +39,44 @@ import {
   Trophy,
   Timer,
   X,
-} from "lucide-react"
-import { useRouter } from "next/navigation"
-import { cn } from "@/lib/utils"
-import { RestTimer } from "@/components/workout/rest-timer"
-
-const RPE_OPTIONS = [
-  { value: "easy" as const, label: "Facil", color: "bg-success text-success-foreground" },
-  { value: "normal" as const, label: "Normal", color: "bg-primary text-primary-foreground" },
-  { value: "hard" as const, label: "Dificil", color: "bg-warning text-warning-foreground" },
-  { value: "failure" as const, label: "Al fallo", color: "bg-destructive text-destructive-foreground" },
-]
+  Calculator,
+} from "lucide-react";
+import { useRouter } from "next/navigation";
+import { cn } from "@/lib/utils";
+import { RestTimer } from "@/components/workout/rest-timer";
+import { PlateCalculator } from "@/components/workout/plate-calculator";
 
 export function WorkoutMode({ routineId }: { routineId: number }) {
-  const router = useRouter()
-  const routine = useLiveQuery(() => db.routines.get(routineId))
+  const router = useRouter();
+  const routine = useLiveQuery(() => db.routines.get(routineId));
 
-  const [started, setStarted] = useState(false)
-  const [elapsed, setElapsed] = useState(0)
-  const [paused, setPaused] = useState(false)
-  const [currentExIndex, setCurrentExIndex] = useState(0)
-  const [exerciseLogs, setExerciseLogs] = useState<WorkoutExerciseLog[]>([])
-  const [showRest, setShowRest] = useState(false)
-  const [restKey, setRestKey] = useState(0)
-  const [restDuration, setRestDuration] = useState(150)
-  const [newPRs, setNewPRs] = useState<string[]>([])
-  const [showPR, setShowPR] = useState(false)
-  const [finished, setFinished] = useState(false)
-  const startTimeRef = useRef<Date | null>(null)
-  const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  const [started, setStarted] = useState(false);
+  const [elapsed, setElapsed] = useState(0);
+  const [paused, setPaused] = useState(false);
+  const [currentExIndex, setCurrentExIndex] = useState(0);
+  const [exerciseLogs, setExerciseLogs] = useState<WorkoutExerciseLog[]>([]);
+  const [showRest, setShowRest] = useState(false);
+  const [restKey, setRestKey] = useState(0);
+  const [restDuration, setRestDuration] = useState(150);
+  const [weightUpdated, setWeightUpdated] = useState(false);
+  const [newPRs, setNewPRs] = useState<string[]>([]);
+  const [showPR, setShowPR] = useState(false);
+  const [finished, setFinished] = useState(false);
+  const startTimeRef = useRef<Date | null>(null);
+  const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  // Swap features
+  const [isSwapOpen, setIsSwapOpen] = useState(false);
+  const [swapIndex, setSwapIndex] = useState<number | null>(null);
+  const [newExName, setNewExName] = useState("");
+  const [newExMuscle, setNewExMuscle] = useState("Pecho");
+
+  // Plate Calculator
+  const [isCalculatorOpen, setIsCalculatorOpen] = useState(false);
+
+  // Save Weight Dialog
+  const [isSaveWeightOpen, setIsSaveWeightOpen] = useState(false);
+  const [manualWeight, setManualWeight] = useState("");
 
   // Initialize exercise logs from routine
   useEffect(() => {
@@ -62,107 +85,223 @@ export function WorkoutMode({ routineId }: { routineId: number }) {
         exerciseId: ex.id,
         exerciseName: ex.name,
         muscleGroup: ex.muscleGroup,
+        supersetId: ex.supersetId,
         sets: Array.from({ length: ex.sets }, (_, i) => ({
           setNumber: i + 1,
           weight: ex.targetWeight,
+          unit: ex.unit || "kg",
           reps: ex.reps,
           rpe: "normal" as const,
           completed: false,
         })),
-      }))
+      }));
 
       // Load last weights async
-      Promise.all(
-        routine.exercises.map((ex) => getLastWeight(ex.name))
-      ).then((weights) => {
-        weights.forEach((w, i) => {
-          if (w > 0) {
-            initLogs[i].sets.forEach((s) => {
-              s.weight = w
-            })
-          }
-        })
-        setExerciseLogs([...initLogs])
-      })
+      Promise.all(routine.exercises.map((ex) => getLastWeight(ex.name))).then(
+        (weights) => {
+          weights.forEach((w, i) => {
+            if (w > 0) {
+              initLogs[i].sets.forEach((s) => {
+                s.weight = w;
+              });
+            }
+          });
+          setExerciseLogs([...initLogs]);
+        },
+      );
 
-      setExerciseLogs(initLogs)
-      setRestDuration(routine.exercises[0]?.restSeconds ?? 150)
+      setExerciseLogs(initLogs);
+      setRestDuration(routine.exercises[0]?.restSeconds ?? 150);
     }
-  }, [routine, exerciseLogs.length])
+  }, [routine, exerciseLogs.length]);
+
+  const groupedLogs = useMemo(() => {
+    const groups: { index: number; log: WorkoutExerciseLog }[][] = [];
+    exerciseLogs.forEach((log, index) => {
+      if (log.supersetId) {
+        const lastGroup = groups[groups.length - 1];
+        if (lastGroup && lastGroup[0]?.log.supersetId === log.supersetId) {
+          lastGroup.push({ index, log });
+        } else {
+          groups.push([{ index, log }]);
+        }
+      } else {
+        groups.push([{ index, log }]);
+      }
+    });
+    return groups;
+  }, [exerciseLogs]);
+
+  const currentGroup = groupedLogs[currentExIndex] || [];
+
+  // Update rest duration when changing exercises
+  useEffect(() => {
+    if (routine && currentGroup.length > 0) {
+      const currentExercise = currentGroup[0]?.log;
+      if (currentExercise) {
+        const originalExercise = routine.exercises.find(
+          (e) => e.id === currentExercise.exerciseId,
+        );
+        if (originalExercise) {
+          setRestDuration(originalExercise.restSeconds ?? 150);
+        }
+      }
+    }
+  }, [currentExIndex, routine]);
+
+  // Helper to group exercises for pre-start view
+  const preStartGroups = useMemo(() => {
+    if (!routine?.exercises) return [];
+    const groups: {
+      exercise: (typeof routine.exercises)[0];
+      isSuperset: boolean;
+    }[] = [];
+    routine.exercises.forEach((ex, index) => {
+      const prevEx = index > 0 ? routine.exercises[index - 1] : null;
+      const isSuperset =
+        prevEx?.supersetId && prevEx.supersetId === ex.supersetId;
+      groups.push({ exercise: ex, isSuperset });
+    });
+    return groups;
+  }, [routine?.exercises]);
 
   // Timer
   useEffect(() => {
     if (started && !paused && !finished) {
       intervalRef.current = setInterval(() => {
-        setElapsed((prev) => prev + 1)
-      }, 1000)
+        setElapsed((prev) => prev + 1);
+      }, 1000);
     }
     return () => {
-      if (intervalRef.current) clearInterval(intervalRef.current)
-    }
-  }, [started, paused, finished])
+      if (intervalRef.current) clearInterval(intervalRef.current);
+    };
+  }, [started, paused, finished]);
 
   function formatTime(seconds: number) {
-    const h = Math.floor(seconds / 3600)
-    const m = Math.floor((seconds % 3600) / 60)
-    const s = seconds % 60
+    const h = Math.floor(seconds / 3600);
+    const m = Math.floor((seconds % 3600) / 60);
+    const s = seconds % 60;
     if (h > 0) {
-      return `${h}:${m.toString().padStart(2, "0")}:${s.toString().padStart(2, "0")}`
+      return `${h}:${m.toString().padStart(2, "0")}:${s.toString().padStart(2, "0")}`;
     }
-    return `${m.toString().padStart(2, "0")}:${s.toString().padStart(2, "0")}`
+    return `${m.toString().padStart(2, "0")}:${s.toString().padStart(2, "0")}`;
   }
 
   function handleStart() {
-    setStarted(true)
-    startTimeRef.current = new Date()
+    setStarted(true);
+    startTimeRef.current = new Date();
   }
 
   function updateSet(
     exIndex: number,
     setIndex: number,
     field: keyof WorkoutSetLog,
-    value: number | string | boolean
+    value: unknown,
   ) {
     setExerciseLogs((prev) => {
-      const updated = [...prev]
-      const sets = [...updated[exIndex].sets]
-      sets[setIndex] = { ...sets[setIndex], [field]: value }
-      updated[exIndex] = { ...updated[exIndex], sets }
-      return updated
-    })
+      const updated = [...prev];
+      const sets = [...updated[exIndex].sets];
+      sets[setIndex] = { ...sets[setIndex], [field]: value };
+      updated[exIndex] = { ...updated[exIndex], sets };
+      return updated;
+    });
+  }
+
+  // Handle weight input - allows empty values
+  function handleWeightChange(
+    exIndex: number,
+    setIndex: number,
+    value: string,
+  ) {
+    setExerciseLogs((prev) => {
+      const updated = [...prev];
+      const sets = [...updated[exIndex].sets];
+      // Allow empty string, convert to number or keep empty
+      const numValue = value === "" ? "" : parseFloat(value);
+      const finalWeight = isNaN(Number(numValue)) ? 0 : numValue;
+      sets[setIndex] = {
+        ...sets[setIndex],
+        weight: finalWeight,
+      };
+      updated[exIndex] = { ...updated[exIndex], sets };
+      return updated;
+    });
+  }
+
+  function handleSwapExercise() {
+    if (!newExName.trim() || swapIndex === null) return;
+    setExerciseLogs((prev) => {
+      const updated = [...prev];
+      updated[swapIndex] = {
+        ...updated[swapIndex],
+        exerciseName: newExName.trim(),
+        muscleGroup: newExMuscle,
+      };
+      return updated;
+    });
+    setIsSwapOpen(false);
+    setNewExName("");
+    setSwapIndex(null);
   }
 
   async function completeSet(exIndex: number, setIndex: number) {
-    updateSet(exIndex, setIndex, "completed", true)
+    // Get current weight value, default to 0 if empty
+    const currentWeightRaw = exerciseLogs[exIndex]?.sets[setIndex]?.weight;
+    const currentWeight =
+      currentWeightRaw === "" ? 0 : Number(currentWeightRaw) || 0;
+    updateSet(exIndex, setIndex, "completed", true);
 
     // Check for PRs
-    const exLog = exerciseLogs[exIndex]
+    const exLog = exerciseLogs[exIndex];
     const completedSets = [
       ...exLog.sets.filter((s) => s.completed),
-      { ...exLog.sets[setIndex], completed: true },
-    ]
-    const prs = await checkAndUpdatePRs(exLog.exerciseName, completedSets)
+      { ...exLog.sets[setIndex], completed: true, weight: currentWeight },
+    ];
+    const prs = await checkAndUpdatePRs(exLog.exerciseName, completedSets);
     if (prs.length > 0) {
-      setNewPRs(prs.map((p) => `${p.exerciseName}: ${p.details}`))
-      setShowPR(true)
-      setTimeout(() => setShowPR(false), 3000)
+      setNewPRs(prs.map((p) => `${p.exerciseName}: ${p.details}`));
+      setShowPR(true);
+      setTimeout(() => setShowPR(false), 3000);
+    }
+
+    // Get the rest duration for this exercise from routine
+    if (routine) {
+      const originalExercise = routine.exercises.find(
+        (e) => e.id === exLog.exerciseId,
+      );
+      if (originalExercise) {
+        setRestDuration(originalExercise.restSeconds ?? 150);
+      }
     }
 
     // Show rest timer
-    setShowRest(true)
+    setShowRest(true);
+  }
+
+  async function saveManualWeight() {
+    if (!routine || currentGroup.length === 0) return;
+
+    const weight = parseFloat(manualWeight) || 0;
+    const currentUnit = currentGroup[0]?.log.sets[0]?.unit || "kg";
+
+    const updatedExercises = routine.exercises.map((ex) => {
+      const match = currentGroup.find((g) => g.log.exerciseId === ex.id);
+      if (match) {
+        return { ...ex, targetWeight: weight, unit: currentUnit };
+      }
+      return ex;
+    });
+
+    await db.routines.update(routine.id!, { exercises: updatedExercises });
+
+    setWeightUpdated(true);
+    setIsSaveWeightOpen(false);
+    setManualWeight("");
+    setTimeout(() => setWeightUpdated(false), 2000);
   }
 
   async function handleFinish() {
-    if (!routine || !startTimeRef.current) return
-
-    const totalVolume = exerciseLogs.reduce(
-      (sum, ex) =>
-        sum +
-        ex.sets
-          .filter((s) => s.completed)
-          .reduce((s2, set) => s2 + set.weight * set.reps, 0),
-      0
-    )
+    if (!routine || !startTimeRef.current) return;
 
     const log: Omit<WorkoutLog, "id"> = {
       routineId: routine.id!,
@@ -171,41 +310,52 @@ export function WorkoutMode({ routineId }: { routineId: number }) {
       startTime: startTimeRef.current,
       endTime: new Date(),
       duration: elapsed,
-      totalVolume,
+      totalVolume: 0,
       completed: true,
       exercises: exerciseLogs,
-    }
+    };
 
-    await db.workoutLogs.add(log as WorkoutLog)
-    setFinished(true)
+    await db.workoutLogs.add(log as WorkoutLog);
+    setFinished(true);
   }
 
-  const currentExercise = exerciseLogs[currentExIndex]
-  const totalSets = exerciseLogs.reduce((s, e) => s + e.sets.length, 0)
-  const completedSets = exerciseLogs.reduce(
-    (s, e) => s + e.sets.filter((set) => set.completed).length,
-    0
-  )
-  const overallProgress = totalSets > 0 ? (completedSets / totalSets) * 100 : 0
+  const totalSets =
+    exerciseLogs.length > 0
+      ? exerciseLogs.reduce((s, e) => s + e.sets.length, 0)
+      : 0;
+  const completedSets =
+    exerciseLogs.length > 0
+      ? exerciseLogs.reduce(
+          (s, e) => s + e.sets.filter((set) => set.completed).length,
+          0,
+        )
+      : 0;
+  const overallProgress = totalSets > 0 ? (completedSets / totalSets) * 100 : 0;
+
+  // For supersets: only show progress when SAME set number is completed in ALL exercises
+  const supersetProgress = useMemo(() => {
+    if (currentGroup.length <= 1) return null;
+    const completedPerExercise = currentGroup.map(
+      (g) => g.log.sets.filter((s) => s.completed).length,
+    );
+    const minCompleted = Math.min(...completedPerExercise);
+    const allSame = completedPerExercise.every(
+      (count) => count === minCompleted,
+    );
+    if (!allSame || minCompleted === 0) return null;
+    return { completed: minCompleted, total: currentGroup.length };
+  }, [currentGroup]);
 
   if (!routine) {
     return (
       <div className="flex min-h-dvh items-center justify-center bg-background">
         <p className="text-muted-foreground">Cargando rutina...</p>
       </div>
-    )
+    );
   }
 
   // Finished screen
   if (finished) {
-    const totalVolume = exerciseLogs.reduce(
-      (sum, ex) =>
-        sum +
-        ex.sets
-          .filter((s) => s.completed)
-          .reduce((s2, set) => s2 + set.weight * set.reps, 0),
-      0
-    )
     return (
       <div className="flex min-h-dvh flex-col items-center justify-center bg-background px-6 text-center">
         <div className="mb-6 flex h-20 w-20 items-center justify-center rounded-full bg-success/20">
@@ -221,16 +371,6 @@ export function WorkoutMode({ routineId }: { routineId: number }) {
               <p className="text-xs text-muted-foreground">Duracion</p>
               <p className="mt-1 text-lg font-bold text-foreground">
                 {formatTime(elapsed)}
-              </p>
-            </CardContent>
-          </Card>
-          <Card>
-            <CardContent className="p-4 text-center">
-              <p className="text-xs text-muted-foreground">Volumen</p>
-              <p className="mt-1 text-lg font-bold text-foreground">
-                {totalVolume > 1000
-                  ? `${(totalVolume / 1000).toFixed(1)}t`
-                  : `${totalVolume}kg`}
               </p>
             </CardContent>
           </Card>
@@ -259,7 +399,7 @@ export function WorkoutMode({ routineId }: { routineId: number }) {
           Volver al Dashboard
         </Button>
       </div>
-    )
+    );
   }
 
   // Pre-start screen
@@ -279,22 +419,88 @@ export function WorkoutMode({ routineId }: { routineId: number }) {
 
         <div className="flex-1 px-4 pt-6">
           <div className="flex flex-col gap-2">
-            {routine.exercises.map((ex, i) => (
-              <Card key={ex.id}>
-                <CardContent className="flex items-center justify-between p-3">
-                  <div>
-                    <p className="font-medium text-foreground">{ex.name}</p>
-                    <p className="text-xs text-muted-foreground">
-                      {ex.muscleGroup}
-                    </p>
+            {preStartGroups.map((item, i) => {
+              const nextEx = routine.exercises[i + 1];
+              const isStartOfSuperset: boolean =
+                !item.isSuperset &&
+                i < routine.exercises.length - 1 &&
+                !!nextEx?.supersetId &&
+                nextEx.supersetId === item.exercise.supersetId;
+
+              if (item.isSuperset) {
+                return (
+                  <div
+                    key={item.exercise.id}
+                    className="flex items-center gap-2 pl-4"
+                  >
+                    <span className="text-primary font-bold">+</span>
+                    <Card className="flex-1 border-primary/30 bg-primary/5">
+                      <CardContent className="flex items-center justify-between p-3 py-2">
+                        <div>
+                          <p className="font-medium text-foreground text-sm">
+                            {item.exercise.name}
+                          </p>
+                        </div>
+                        <p className="text-xs font-medium text-muted-foreground">
+                          {item.exercise.sets}x{item.exercise.reps}
+                        </p>
+                      </CardContent>
+                    </Card>
                   </div>
-                  <p className="text-sm font-medium text-muted-foreground">
-                    {ex.sets}x{ex.reps}{" "}
-                    {ex.targetWeight > 0 ? `@ ${ex.targetWeight}kg` : ""}
-                  </p>
-                </CardContent>
-              </Card>
-            ))}
+                );
+              }
+
+              if (isStartOfSuperset) {
+                return (
+                  <div key={item.exercise.id} className="relative">
+                    <div className="absolute -left-2 top-1/2 -translate-y-1/2 w-6 h-6 rounded-full bg-primary/10 flex items-center justify-center z-10">
+                      <span className="text-[10px] font-bold text-primary">
+                        SS
+                      </span>
+                    </div>
+                    <Card className="border-primary/30 bg-primary/5">
+                      <CardContent className="flex items-center justify-between p-3">
+                        <div>
+                          <p className="font-medium text-foreground">
+                            {item.exercise.name}
+                          </p>
+                          <p className="text-xs text-muted-foreground">
+                            {item.exercise.muscleGroup}
+                          </p>
+                        </div>
+                        <p className="text-sm font-medium text-muted-foreground">
+                          {item.exercise.sets}x{item.exercise.reps}{" "}
+                          {item.exercise.targetWeight > 0
+                            ? `@ ${item.exercise.targetWeight}kg`
+                            : ""}
+                        </p>
+                      </CardContent>
+                    </Card>
+                  </div>
+                );
+              }
+
+              return (
+                <Card key={item.exercise.id}>
+                  <CardContent className="flex items-center justify-between p-3">
+                    <div>
+                      <p className="font-medium text-foreground">
+                        {item.exercise.name}
+                      </p>
+                      <p className="text-xs text-muted-foreground">
+                        {item.exercise.muscleGroup}
+                      </p>
+                    </div>
+                    <p className="text-sm font-medium text-muted-foreground">
+                      {item.exercise.sets}x{item.exercise.reps}{" "}
+                      {item.exercise.targetWeight > 0
+                        ? `@ ${item.exercise.targetWeight}kg`
+                        : ""}
+                    </p>
+                  </CardContent>
+                </Card>
+              );
+            })}
           </div>
         </div>
 
@@ -309,7 +515,7 @@ export function WorkoutMode({ routineId }: { routineId: number }) {
           </Button>
         </div>
       </div>
-    )
+    );
   }
 
   // Active workout screen
@@ -343,7 +549,7 @@ export function WorkoutMode({ routineId }: { routineId: number }) {
           size="sm"
           className="text-destructive"
           onClick={() => {
-            if (confirm("Cancelar entrenamiento?")) router.push("/")
+            if (confirm("Cancelar entrenamiento?")) router.push("/");
           }}
         >
           <X className="mr-1 h-4 w-4" />
@@ -355,26 +561,43 @@ export function WorkoutMode({ routineId }: { routineId: number }) {
             {formatTime(elapsed)}
           </span>
         </div>
-        <Button
-          variant="ghost"
-          size="icon"
-          onClick={() => setPaused(!paused)}
-        >
-          {paused ? (
-            <Play className="h-5 w-5" />
-          ) : (
-            <Pause className="h-5 w-5" />
-          )}
-        </Button>
+        <div className="flex items-center gap-1">
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={() => setIsCalculatorOpen(true)}
+            title="Calculadora de discos"
+          >
+            <Calculator className="h-4 w-4" />
+          </Button>
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={() => setPaused(!paused)}
+          >
+            {paused ? (
+              <Play className="h-5 w-5" />
+            ) : (
+              <Pause className="h-5 w-5" />
+            )}
+          </Button>
+        </div>
       </div>
 
       {/* Progress */}
       <div className="px-4 pt-3">
         <div className="flex items-center justify-between text-xs text-muted-foreground mb-1">
           <span>Progreso</span>
-          <span>
-            {completedSets}/{totalSets} series
-          </span>
+          {supersetProgress ? (
+            <span>
+              {supersetProgress.completed} serie de {supersetProgress.total}{" "}
+              ejercicios
+            </span>
+          ) : (
+            <span>
+              {completedSets}/{totalSets} series
+            </span>
+          )}
         </div>
         <Progress value={overallProgress} className="h-2" />
       </div>
@@ -389,21 +612,47 @@ export function WorkoutMode({ routineId }: { routineId: number }) {
         >
           <ChevronLeft className="h-5 w-5" />
         </Button>
-        <div className="text-center">
+        <div className="text-center flex flex-col items-center">
           <p className="text-xs text-muted-foreground">
-            {currentExIndex + 1} / {exerciseLogs.length}
+            {currentExIndex + 1} / {groupedLogs.length}
           </p>
-          <h2 className="text-xl font-bold text-foreground">
-            {currentExercise?.exerciseName}
-          </h2>
-          <p className="text-xs text-muted-foreground">
-            {currentExercise?.muscleGroup}
-          </p>
+          {currentGroup.length > 1 ? (
+            <div className="flex flex-col items-center">
+              <h2 className="text-xl font-bold text-foreground leading-tight text-center">
+                Súper Serie
+              </h2>
+              <p className="text-xs text-muted-foreground mt-1 text-center font-medium">
+                {currentGroup.map((g) => g.log.exerciseName).join(" + ")}
+              </p>
+            </div>
+          ) : (
+            <>
+              <h2 className="text-xl font-bold text-foreground">
+                {currentGroup[0]?.log.exerciseName}
+              </h2>
+              <p className="text-xs text-muted-foreground">
+                {currentGroup[0]?.log.muscleGroup}
+              </p>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => {
+                  setSwapIndex(currentGroup[0]?.index);
+                  setNewExName(currentGroup[0]?.log.exerciseName || "");
+                  setNewExMuscle(currentGroup[0]?.log.muscleGroup || "Pecho");
+                  setIsSwapOpen(true);
+                }}
+                className="h-6 px-2 mt-1 text-xs text-primary"
+              >
+                Sustituir
+              </Button>
+            </>
+          )}
         </div>
         <Button
           variant="ghost"
           size="icon"
-          disabled={currentExIndex === exerciseLogs.length - 1}
+          disabled={currentExIndex === groupedLogs.length - 1}
           onClick={() => setCurrentExIndex((p) => p + 1)}
         >
           <ChevronRight className="h-5 w-5" />
@@ -412,94 +661,159 @@ export function WorkoutMode({ routineId }: { routineId: number }) {
 
       {/* Sets */}
       <div className="flex-1 overflow-auto px-4 pt-4">
-        <div className="mb-2 grid grid-cols-12 gap-2 text-xs font-medium text-muted-foreground px-1">
-          <span className="col-span-1">Set</span>
-          <span className="col-span-3 text-center">Peso</span>
-          <span className="col-span-2 text-center">Reps</span>
-          <span className="col-span-4 text-center">RPE</span>
-          <span className="col-span-2 text-center">OK</span>
-        </div>
-        {currentExercise?.sets.map((set, si) => (
-          <div
-            key={si}
-            className={cn(
-              "mb-2 grid grid-cols-12 items-center gap-2 rounded-lg p-2",
-              set.completed
-                ? "bg-success/10"
-                : "bg-card"
-            )}
-          >
-            <span className="col-span-1 text-center text-sm font-bold text-muted-foreground">
-              {set.setNumber}
-            </span>
-            <div className="col-span-3">
-              <Input
-                type="number"
-                min={0}
-                step={0.5}
-                value={set.weight}
-                onChange={(e) =>
-                  updateSet(
-                    currentExIndex,
-                    si,
-                    "weight",
-                    parseFloat(e.target.value) || 0
-                  )
-                }
-                disabled={set.completed}
-                className="h-9 text-center text-sm"
-              />
-            </div>
-            <div className="col-span-2">
-              <Input
-                type="number"
-                min={0}
-                value={set.reps}
-                onChange={(e) =>
-                  updateSet(
-                    currentExIndex,
-                    si,
-                    "reps",
-                    parseInt(e.target.value) || 0
-                  )
-                }
-                disabled={set.completed}
-                className="h-9 text-center text-sm"
-              />
-            </div>
-            <div className="col-span-4">
-              <select
-                value={set.rpe}
-                onChange={(e) =>
-                  updateSet(currentExIndex, si, "rpe", e.target.value)
-                }
-                disabled={set.completed}
-                className="h-9 w-full rounded-md border border-input bg-background px-1 text-xs text-foreground"
-              >
-                {RPE_OPTIONS.map((r) => (
-                  <option key={r.value} value={r.value}>
-                    {r.label}
-                  </option>
-                ))}
-              </select>
-            </div>
-            <div className="col-span-2 flex justify-center">
-              {set.completed ? (
-                <div className="flex h-9 w-9 items-center justify-center rounded-full bg-success">
-                  <Check className="h-4 w-4 text-success-foreground" />
+        {currentGroup.map(({ index: flatIndex, log }) => {
+          const maxWeight = Math.max(
+            ...log.sets.map((s) => {
+              const w = s.weight === "" ? 0 : Number(s.weight);
+              return w;
+            }),
+          );
+
+          return (
+            <div key={flatIndex} className="mb-6 relative">
+              {currentGroup.length > 1 && (
+                <div className="flex flex-col items-center justify-center mb-3">
+                  <h3 className="font-bold text-sm text-foreground">
+                    {log.exerciseName}
+                  </h3>
+                  <p className="text-xs text-muted-foreground mb-1">
+                    {log.muscleGroup}
+                  </p>
+                  <div className="flex gap-2">
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => {
+                        setSwapIndex(flatIndex);
+                        setNewExName(log.exerciseName || "");
+                        setNewExMuscle(log.muscleGroup || "Pecho");
+                        setIsSwapOpen(true);
+                      }}
+                      className="h-6 px-2 text-xs text-primary"
+                    >
+                      Sustituir
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => {
+                        setSwapIndex(flatIndex);
+                        setManualWeight(
+                          maxWeight > 0 ? maxWeight.toString() : "",
+                        );
+                        setIsSaveWeightOpen(true);
+                      }}
+                      className="h-6 px-2 text-xs text-muted-foreground"
+                    >
+                      {weightUpdated ? "¡Guardado!" : "Guardar peso"}
+                    </Button>
+                  </div>
                 </div>
-              ) : (
-                <Button
-                  size="icon"
-                  className="h-9 w-9 rounded-full"
-                  onClick={() => completeSet(currentExIndex, si)}
-                >
-                  <Check className="h-4 w-4" />
-                </Button>
+              )}
+              <div className="mb-2 grid grid-cols-12 gap-2 text-xs font-medium text-muted-foreground px-1">
+                <span className="col-span-2 text-center">Set</span>
+                <span className="col-span-5 text-center">Peso</span>
+                <span className="col-span-3 text-center">Reps</span>
+                <span className="col-span-2 text-center">OK</span>
+              </div>
+              {log.sets.map((set, si) => {
+                const weightValue = set.weight === "" ? 0 : Number(set.weight);
+                const isCompleted = Boolean(set.completed);
+                return (
+                  <div
+                    key={si}
+                    className={cn(
+                      "mb-2 grid grid-cols-12 items-center gap-2 rounded-lg p-2",
+                      isCompleted ? "bg-success/10" : "bg-card",
+                    )}
+                  >
+                    <span className="col-span-2 text-center text-sm font-bold text-muted-foreground">
+                      {set.setNumber}
+                    </span>
+                    <div className="col-span-5 flex items-center gap-1">
+                      <Input
+                        type="text"
+                        inputMode="decimal"
+                        value={weightValue === 0 ? "" : weightValue}
+                        onChange={(e) =>
+                          handleWeightChange(flatIndex, si, e.target.value)
+                        }
+                        disabled={isCompleted}
+                        className="h-9 min-w-0 flex-1 text-center text-sm px-1"
+                        placeholder="0"
+                      />
+                      <Input
+                        type="text"
+                        value={set.unit}
+                        onChange={(e) =>
+                          updateSet(flatIndex, si, "unit", e.target.value)
+                        }
+                        disabled={isCompleted}
+                        className="h-9 w-12 p-0 shrink-0 text-center text-xs font-bold uppercase text-muted-foreground"
+                      />
+                    </div>
+                    <div className="col-span-3">
+                      <Input
+                        type="text"
+                        value={set.reps}
+                        onChange={(e) =>
+                          updateSet(flatIndex, si, "reps", e.target.value)
+                        }
+                        disabled={isCompleted}
+                        className="h-9 text-center text-sm"
+                      />
+                    </div>
+                    <div className="col-span-2 flex justify-center">
+                      {isCompleted ? (
+                        <div className="flex h-9 w-9 items-center justify-center rounded-full bg-success">
+                          <Check className="h-4 w-4 text-success-foreground" />
+                        </div>
+                      ) : (
+                        <Button
+                          size="icon"
+                          className="h-9 w-9 rounded-full"
+                          onClick={() => completeSet(flatIndex, si)}
+                        >
+                          <Check className="h-4 w-4" />
+                        </Button>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+
+              {/* Single exercise: show save button below sets */}
+              {currentGroup.length === 1 && (
+                <div className="mt-4 flex justify-center">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => {
+                      const maxWeightSingle = Math.max(
+                        ...currentGroup.flatMap((g) =>
+                          g.log.sets.map((s) => {
+                            const w = s.weight === "" ? 0 : Number(s.weight);
+                            return w;
+                          }),
+                        ),
+                      );
+                      setManualWeight(
+                        maxWeightSingle > 0 ? maxWeightSingle.toString() : "",
+                      );
+                      setIsSaveWeightOpen(true);
+                    }}
+                    disabled={weightUpdated}
+                    className="text-xs text-muted-foreground w-full max-w-[200px]"
+                  >
+                    {weightUpdated
+                      ? "¡Peso Guardado!"
+                      : "Guardar peso como base"}
+                  </Button>
+                </div>
               )}
             </div>
-          </div>
-        ))}
+          );
+        })}
       </div>
 
       {/* Bottom Action */}
@@ -513,8 +827,8 @@ export function WorkoutMode({ routineId }: { routineId: number }) {
             <Square className="mr-2 h-5 w-5" />
             Finalizar Entrenamiento
           </Button>
-        ) : currentExercise?.sets.every((s) => s.completed) &&
-          currentExIndex < exerciseLogs.length - 1 ? (
+        ) : currentGroup.every((g) => g.log.sets.every((s) => s.completed)) &&
+          currentExIndex < groupedLogs.length - 1 ? (
           <Button
             onClick={() => setCurrentExIndex((p) => p + 1)}
             className="w-full rounded-xl py-6 text-base font-bold"
@@ -534,6 +848,101 @@ export function WorkoutMode({ routineId }: { routineId: number }) {
           </Button>
         )}
       </div>
+
+      {/* Swap Exercise Dialog */}
+      <Dialog open={isSwapOpen} onOpenChange={setIsSwapOpen}>
+        <DialogContent className="sm:max-w-md w-[90vw] rounded-xl z-[60]">
+          <DialogHeader>
+            <DialogTitle>Sustituir Ejercicio</DialogTitle>
+          </DialogHeader>
+          <div className="flex flex-col gap-4 py-4">
+            <div className="flex flex-col gap-2">
+              <label className="text-sm font-medium">Nuevo Ejercicio</label>
+              <Input
+                placeholder="Ej. Press inclinado"
+                value={newExName}
+                onChange={(e) => setNewExName(e.target.value)}
+              />
+            </div>
+            <div className="flex flex-col gap-2">
+              <label className="text-sm font-medium">Grupo Muscular</label>
+              <Select value={newExMuscle} onValueChange={setNewExMuscle}>
+                <SelectTrigger>
+                  <SelectValue placeholder="Selecciona..." />
+                </SelectTrigger>
+                <SelectContent className="z-[70]">
+                  <SelectItem value="Pecho">Pecho</SelectItem>
+                  <SelectItem value="Espalda">Espalda</SelectItem>
+                  <SelectItem value="Piernas">Piernas</SelectItem>
+                  <SelectItem value="Hombros">Hombros</SelectItem>
+                  <SelectItem value="Brazos">Brazos</SelectItem>
+                  <SelectItem value="Core">Core</SelectItem>
+                  <SelectItem value="Cardio">Cardio</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+          <DialogFooter className="flex-col sm:flex-row gap-2">
+            <Button variant="outline" onClick={() => setIsSwapOpen(false)}>
+              Cancelar
+            </Button>
+            <Button onClick={handleSwapExercise} disabled={!newExName.trim()}>
+              Sustituir
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Save Weight Dialog */}
+      <Dialog open={isSaveWeightOpen} onOpenChange={setIsSaveWeightOpen}>
+        <DialogContent className="sm:max-w-md w-[90vw] rounded-xl z-[60]">
+          <DialogHeader>
+            <DialogTitle>Guardar Peso Base</DialogTitle>
+          </DialogHeader>
+          <div className="flex flex-col gap-4 py-4">
+            <div className="flex flex-col gap-2">
+              <label className="text-sm font-medium">
+                Ingresa el peso que deseas guardar
+              </label>
+              <div className="flex items-center gap-2">
+                <Input
+                  type="text"
+                  inputMode="decimal"
+                  placeholder="Peso"
+                  value={manualWeight}
+                  onChange={(e) => setManualWeight(e.target.value)}
+                  className="flex-1"
+                  autoFocus
+                />
+                <span className="text-sm font-bold text-muted-foreground uppercase">
+                  {currentGroup[0]?.log.sets[0]?.unit || "kg"}
+                </span>
+              </div>
+            </div>
+          </div>
+          <DialogFooter className="flex-col sm:flex-row gap-2">
+            <Button
+              variant="outline"
+              onClick={() => setIsSaveWeightOpen(false)}
+            >
+              Cancelar
+            </Button>
+            <Button
+              onClick={saveManualWeight}
+              disabled={!manualWeight || parseFloat(manualWeight) <= 0}
+            >
+              Guardar
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Plate Calculator Dialog */}
+      <PlateCalculator
+        open={isCalculatorOpen}
+        onOpenChange={setIsCalculatorOpen}
+        defaultUnit={currentGroup[0]?.log.sets[0]?.unit || "kg"}
+      />
     </div>
-  )
+  );
 }

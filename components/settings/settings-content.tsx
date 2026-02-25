@@ -1,13 +1,26 @@
-"use client"
+"use client";
 
-import { useState, useRef, useEffect } from "react"
-import { useLiveQuery } from "dexie-react-hooks"
-import { db } from "@/lib/db"
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
-import { Button } from "@/components/ui/button"
-import { Input } from "@/components/ui/input"
-import { Label } from "@/components/ui/label"
-import { useTheme } from "next-themes"
+import { useState, useRef, useEffect } from "react";
+import { useLiveQuery } from "dexie-react-hooks";
+import { db } from "@/lib/db";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { useTheme } from "next-themes";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
+  Accordion,
+  AccordionContent,
+  AccordionItem,
+  AccordionTrigger,
+} from "@/components/ui/accordion";
 import {
   Download,
   Upload,
@@ -19,39 +32,76 @@ import {
   AlertTriangle,
   Check,
   Loader2,
-} from "lucide-react"
+  Settings,
+  Database,
+  HelpCircle,
+  Scale,
+  Target,
+  Dumbbell,
+  TrendingUp,
+  Plus,
+} from "lucide-react";
+
+import { BASE_ROUTINES } from "@/lib/base-routines";
 
 const DEFAULT_SETTINGS = {
   defaultRestSeconds: 150,
   theme: "dark" as const,
   bodyWeight: null as number | null,
-}
+  defaultUnit: "kg",
+};
 
 export function SettingsContent() {
-  const { theme, setTheme } = useTheme()
-  const [mounted, setMounted] = useState(false)
-  const fileInputRef = useRef<HTMLInputElement>(null)
-  const [exportStatus, setExportStatus] = useState<string | null>(null)
-  const [importStatus, setImportStatus] = useState<string | null>(null)
+  const { theme, setTheme } = useTheme();
+  const [mounted, setMounted] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [exportStatus, setExportStatus] = useState<string | null>(null);
+  const [importStatus, setImportStatus] = useState<string | null>(null);
+  const [loadBaseStatus, setLoadBaseStatus] = useState<string | null>(null);
+
+  // Local state for body weight to allow empty values
+  const [bodyWeightInput, setBodyWeightInput] = useState<string>("");
 
   // Read-only query - NO writes allowed here
-  const settings = useLiveQuery(() => db.userSettings.toCollection().first())
+  const settings = useLiveQuery(() => db.userSettings.toCollection().first());
+
+  // Sync body weight input with settings
+  useEffect(() => {
+    if (settings?.bodyWeight !== null && settings?.bodyWeight !== undefined) {
+      setBodyWeightInput(String(settings.bodyWeight));
+    } else {
+      setBodyWeightInput("");
+    }
+  }, [settings?.bodyWeight]);
 
   // Separate effect to seed default settings (write operation, outside liveQuery)
   useEffect(() => {
-    setMounted(true)
+    setMounted(true);
     async function ensureSettings() {
-      const count = await db.userSettings.count()
+      const count = await db.userSettings.count();
       if (count === 0) {
-        await db.userSettings.add(DEFAULT_SETTINGS)
+        await db.userSettings.add(DEFAULT_SETTINGS);
       }
     }
-    ensureSettings()
-  }, [])
+    ensureSettings();
+  }, []);
 
   async function updateSetting(field: string, value: unknown) {
-    if (!settings?.id) return
-    await db.userSettings.update(settings.id, { [field]: value })
+    if (!settings?.id) return;
+    await db.userSettings.update(settings.id, { [field]: value });
+  }
+
+  async function handleBodyWeightChange(value: string) {
+    setBodyWeightInput(value);
+    // Only save to DB if there's a valid number
+    if (value === "") {
+      await updateSetting("bodyWeight", null);
+    } else {
+      const num = parseFloat(value);
+      if (!isNaN(num)) {
+        await updateSetting("bodyWeight", num);
+      }
+    }
   }
 
   async function handleExport() {
@@ -64,80 +114,108 @@ export function SettingsContent() {
         personalRecords: await db.personalRecords.toArray(),
         goals: await db.goals.toArray(),
         userSettings: await db.userSettings.toArray(),
-      }
+      };
       const blob = new Blob([JSON.stringify(data, null, 2)], {
         type: "application/json",
-      })
-      const url = URL.createObjectURL(blob)
-      const a = document.createElement("a")
-      a.href = url
-      a.download = `Juan Traning-backup-${new Date().toISOString().split("T")[0]}.json`
-      a.click()
-      URL.revokeObjectURL(url)
-      setExportStatus("Exportado correctamente")
-      setTimeout(() => setExportStatus(null), 3000)
+      });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `Cuti Traning-backup-${new Date().toISOString().split("T")[0]}.json`;
+      a.click();
+      URL.revokeObjectURL(url);
+      setExportStatus("Exportado correctamente");
+      setTimeout(() => setExportStatus(null), 3000);
     } catch {
-      setExportStatus("Error al exportar")
+      setExportStatus("Error al exportar");
     }
   }
 
   async function handleImport(e: React.ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0]
-    if (!file) return
+    const file = e.target.files?.[0];
+    if (!file) return;
 
     try {
-      const text = await file.text()
-      const data = JSON.parse(text)
+      const text = await file.text();
+      const data = JSON.parse(text);
 
       if (!data.version || !data.routines) {
-        setImportStatus("Archivo no valido")
-        return
+        setImportStatus("Archivo no válido");
+        return;
       }
 
-      if (
-        !confirm("Esto reemplazara todos los datos actuales. Continuar?")
-      ) {
-        return
+      if (!confirm("Esto reemplazará todos los datos actuales. ¿Continuar?")) {
+        return;
       }
 
-      await db.routines.clear()
-      await db.workoutLogs.clear()
-      await db.personalRecords.clear()
-      await db.goals.clear()
-      await db.userSettings.clear()
+      await db.routines.clear();
+      await db.workoutLogs.clear();
+      await db.personalRecords.clear();
+      await db.goals.clear();
+      await db.userSettings.clear();
 
-      if (data.routines?.length) await db.routines.bulkAdd(data.routines)
+      if (data.routines?.length) await db.routines.bulkAdd(data.routines);
       if (data.workoutLogs?.length)
-        await db.workoutLogs.bulkAdd(data.workoutLogs)
+        await db.workoutLogs.bulkAdd(data.workoutLogs);
       if (data.personalRecords?.length)
-        await db.personalRecords.bulkAdd(data.personalRecords)
-      if (data.goals?.length) await db.goals.bulkAdd(data.goals)
+        await db.personalRecords.bulkAdd(data.personalRecords);
+      if (data.goals?.length) await db.goals.bulkAdd(data.goals);
       if (data.userSettings?.length)
-        await db.userSettings.bulkAdd(data.userSettings)
+        await db.userSettings.bulkAdd(data.userSettings);
 
-      setImportStatus("Importado correctamente")
-      setTimeout(() => setImportStatus(null), 3000)
+      setImportStatus("Importado correctamente");
+      setTimeout(() => setImportStatus(null), 3000);
     } catch {
-      setImportStatus("Error al importar archivo")
+      setImportStatus("Error al importar archivo");
     }
 
-    if (fileInputRef.current) fileInputRef.current.value = ""
+    if (fileInputRef.current) fileInputRef.current.value = "";
+  }
+
+  async function handleLoadBaseRoutines() {
+    if (
+      !confirm(
+        "Esto agregará las 4 rutinas base (Lun, Mar, Jue, Vie). ¿Continuar?",
+      )
+    ) {
+      return;
+    }
+
+    try {
+      const routinesToAdd = BASE_ROUTINES.map((r) => ({
+        ...r,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      }));
+
+      await db.routines.bulkAdd(routinesToAdd);
+      setLoadBaseStatus("Rutinas base cargadas correctamente");
+      setTimeout(() => setLoadBaseStatus(null), 3000);
+    } catch {
+      setLoadBaseStatus("Error al cargar rutinas base");
+    }
   }
 
   async function handleClearData() {
     if (
       !confirm(
-        "ATENCION: Esto eliminara todos los datos. Esta accion no se puede deshacer. Continuar?"
+        "⚠️ ATENCIÓN: Esto eliminará TODOS los datos. Esta acción no se puede deshacer. ¿Continuar?",
       )
     )
-      return
-    if (!confirm("Confirmar eliminacion total de datos?")) return
+      return;
+    if (!confirm("¿Confirmar eliminación total de datos?")) return;
 
-    await db.routines.clear()
-    await db.workoutLogs.clear()
-    await db.personalRecords.clear()
-    await db.goals.clear()
-    await db.userSettings.clear()
+    // Clear ALL tables in the database
+    await db.routines.clear();
+    await db.workoutLogs.clear();
+    await db.personalRecords.clear();
+    await db.goals.clear();
+    await db.userSettings.clear();
+    await db.bodyWeight.clear();
+    await db.weightGoals.clear();
+
+    // Reload the page to reset the app state
+    window.location.reload();
   }
 
   if (!mounted) {
@@ -145,19 +223,22 @@ export function SettingsContent() {
       <div className="flex min-h-[60vh] items-center justify-center">
         <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
       </div>
-    )
+    );
   }
 
   return (
-    <div className="mx-auto max-w-lg px-4 pt-6">
+    <div className="mx-auto max-w-lg px-4 pt-6 pb-10">
       <h1 className="mb-6 text-2xl font-bold text-foreground">Ajustes</h1>
 
       {/* Theme */}
-      <Card className="mb-4">
-        <CardHeader className="p-4 pb-2">
-          <CardTitle className="text-sm">Apariencia</CardTitle>
+      <Card className="mb-5">
+        <CardHeader className="p-5 pb-3">
+          <CardTitle className="text-base flex items-center gap-2">
+            <Settings className="h-5 w-5 text-primary" />
+            Apariencia
+          </CardTitle>
         </CardHeader>
-        <CardContent className="p-4 pt-2">
+        <CardContent className="p-5 pt-0">
           <div className="flex gap-2">
             {[
               { value: "light", icon: Sun, label: "Claro" },
@@ -167,7 +248,7 @@ export function SettingsContent() {
               <Button
                 key={opt.value}
                 variant={theme === opt.value ? "default" : "outline"}
-                className="flex-1 gap-1.5"
+                className="flex-1 gap-2 h-11 rounded-lg"
                 size="sm"
                 onClick={() => setTheme(opt.value)}
               >
@@ -180,70 +261,84 @@ export function SettingsContent() {
       </Card>
 
       {/* Workout Defaults */}
-      <Card className="mb-4">
-        <CardHeader className="p-4 pb-2">
-          <CardTitle className="text-sm">Entrenamiento</CardTitle>
+      <Card className="mb-5">
+        <CardHeader className="p-5 pb-3">
+          <CardTitle className="text-base flex items-center gap-2">
+            <Timer className="h-5 w-5 text-chart-2" />
+            Entrenamiento
+          </CardTitle>
         </CardHeader>
-        <CardContent className="p-4 pt-2 flex flex-col gap-4">
+        <CardContent className="p-5 pt-0 flex flex-col gap-5">
           <div>
-            <Label className="flex items-center gap-2 text-sm">
+            <Label className="text-sm font-medium flex items-center gap-2">
               <Timer className="h-4 w-4 text-muted-foreground" />
-              Descanso por defecto (segundos)
+              Descanso por defecto
             </Label>
-            <Input
-              type="number"
-              min={30}
-              step={15}
-              value={settings?.defaultRestSeconds ?? 150}
-              onChange={(e) =>
-                updateSetting(
-                  "defaultRestSeconds",
-                  parseInt(e.target.value) || 150
-                )
+            <Select
+              value={String(settings?.defaultRestSeconds ?? 150)}
+              onValueChange={(value: string) =>
+                updateSetting("defaultRestSeconds", parseInt(value))
               }
-              className="mt-1.5"
-            />
+            >
+              <SelectTrigger className="mt-2 h-11">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="60">60 segundos (1 min)</SelectItem>
+                <SelectItem value="90">90 segundos (1.5 min)</SelectItem>
+                <SelectItem value="120">120 segundos (2 min)</SelectItem>
+                <SelectItem value="150">150 segundos (2.5 min)</SelectItem>
+                <SelectItem value="180">180 segundos (3 min)</SelectItem>
+                <SelectItem value="240">240 segundos (4 min)</SelectItem>
+              </SelectContent>
+            </Select>
           </div>
           <div>
-            <Label className="flex items-center gap-2 text-sm">
+            <Label
+              htmlFor="body-weight"
+              className="text-sm font-medium flex items-center gap-2"
+            >
               <Weight className="h-4 w-4 text-muted-foreground" />
               Peso corporal (kg)
             </Label>
             <Input
-              type="number"
-              min={0}
-              step={0.1}
-              value={settings?.bodyWeight ?? ""}
-              onChange={(e) =>
-                updateSetting(
-                  "bodyWeight",
-                  e.target.value ? parseFloat(e.target.value) : null
-                )
-              }
+              id="body-weight"
+              type="text"
+              inputMode="decimal"
+              value={bodyWeightInput}
+              onChange={(e) => handleBodyWeightChange(e.target.value)}
               placeholder="Opcional"
-              className="mt-1.5"
+              className="mt-2 h-11"
             />
           </div>
         </CardContent>
       </Card>
 
       {/* Data Management */}
-      <Card className="mb-4">
-        <CardHeader className="p-4 pb-2">
-          <CardTitle className="text-sm">Datos</CardTitle>
+      <Card className="mb-5">
+        <CardHeader className="p-5 pb-3">
+          <CardTitle className="text-base flex items-center gap-2">
+            <Database className="h-5 w-5 text-chart-3" />
+            Gestión de Datos
+          </CardTitle>
         </CardHeader>
-        <CardContent className="p-4 pt-2 flex flex-col gap-3">
+        <CardContent className="p-5 pt-0 flex flex-col gap-3">
           <Button
             variant="outline"
-            className="w-full justify-start gap-2"
+            className="w-full justify-start gap-3 h-12 rounded-lg border-border/60"
             onClick={handleExport}
           >
-            <Download className="h-4 w-4" />
-            Exportar datos (JSON)
+            <Download className="h-5 w-5 text-primary" />
+            <div className="flex flex-col items-start">
+              <span className="font-medium">Exportar datos</span>
+              <span className="text-xs text-muted-foreground">
+                Crear backup en JSON
+              </span>
+            </div>
           </Button>
           {exportStatus && (
-            <p className="text-xs text-accent flex items-center gap-1">
-              <Check className="h-3 w-3" />
+            <p className="text-sm text-accent flex items-center gap-2 ml-1">
+              <Check className="h-4 w-4" />
               {exportStatus}
             </p>
           )}
@@ -251,11 +346,16 @@ export function SettingsContent() {
           <div>
             <Button
               variant="outline"
-              className="w-full justify-start gap-2"
+              className="w-full justify-start gap-3 h-12 rounded-lg border-border/60"
               onClick={() => fileInputRef.current?.click()}
             >
-              <Upload className="h-4 w-4" />
-              Importar respaldo
+              <Upload className="h-5 w-5 text-chart-2" />
+              <div className="flex flex-col items-start">
+                <span className="font-medium">Importar respaldo</span>
+                <span className="text-xs text-muted-foreground">
+                  Restaurar desde JSON
+                </span>
+              </div>
             </Button>
             <input
               ref={fileInputRef}
@@ -266,32 +366,247 @@ export function SettingsContent() {
             />
           </div>
           {importStatus && (
-            <p className="text-xs text-accent flex items-center gap-1">
-              <Check className="h-3 w-3" />
+            <p className="text-sm text-accent flex items-center gap-2 ml-1">
+              <Check className="h-4 w-4" />
               {importStatus}
+            </p>
+          )}
+
+          <Button
+            variant="outline"
+            className="w-full justify-start gap-3 h-12 rounded-lg border-border/60"
+            onClick={handleLoadBaseRoutines}
+          >
+            <Plus className="h-5 w-5 text-chart-4" />
+            <div className="flex flex-col items-start">
+              <span className="font-medium">Cargar rutinas base</span>
+              <span className="text-xs text-muted-foreground">
+                4 rutinas predefinidas (Lun, Mar, Jue, Vie)
+              </span>
+            </div>
+          </Button>
+          {loadBaseStatus && (
+            <p className="text-sm text-accent flex items-center gap-2 ml-1">
+              <Check className="h-4 w-4" />
+              {loadBaseStatus}
             </p>
           )}
         </CardContent>
       </Card>
 
-      {/* Danger Zone */}
-      <Card className="mb-8 border-destructive/30">
-        <CardHeader className="p-4 pb-2">
-          <CardTitle className="text-sm text-destructive flex items-center gap-2">
-            <AlertTriangle className="h-4 w-4" />
-            Zona de peligro
+      {/* FAQ */}
+      <Card className="mb-5">
+        <CardHeader className="p-5 pb-3">
+          <CardTitle className="text-base flex items-center gap-2">
+            <HelpCircle className="h-5 w-5 text-primary" />
+            Preguntas Frecuentes
           </CardTitle>
         </CardHeader>
         <CardContent className="p-4 pt-2">
+          <Accordion type="single" collapsible className="w-full">
+            <AccordionItem value="consistency">
+              <AccordionTrigger className="text-sm">
+                <div className="flex items-center gap-2">
+                  <Target className="h-4 w-4 text-chart-3" />
+                  ¿Qué es la consistencia?
+                </div>
+              </AccordionTrigger>
+              <AccordionContent>
+                <div className="text-sm text-muted-foreground space-y-2">
+                  <p>
+                    La <strong>consistencia</strong> mide qué tan seguido
+                    entrenas comparando con tus días asignados.
+                  </p>
+                  <p>
+                    Ejemplo: Si tienes 3 rutinas asignadas (Lunes, Miércoles,
+                    Viernes) y entrenas 2 veces en la semana, tu consistencia
+                    será del 67% (2/3).
+                  </p>
+                  <p className="text-xs mt-2">
+                    💡 <strong>Tip:</strong> Mantén una consistencia alta (70%)
+                    para ver resultados!
+                  </p>
+                </div>
+              </AccordionContent>
+            </AccordionItem>
+
+            <AccordionItem value="1rm">
+              <AccordionTrigger className="text-sm">
+                <div className="flex items-center gap-2">
+                  <TrendingUp className="h-4 w-4 text-chart-2" />
+                  ¿Qué es 1RM estimado?
+                </div>
+              </AccordionTrigger>
+              <AccordionContent>
+                <div className="text-sm text-muted-foreground space-y-2">
+                  <p>
+                    El <strong>1RM</strong> (Una Repetición Máxima) es el peso
+                    máximo que podrías levantar en una sola repetición.
+                  </p>
+                  <p>
+                    Se calcula usando fórmulas como Epley, Brzycki y Lombardi
+                    basándose en tus series registradas.
+                  </p>
+                  <p className="text-xs mt-2">
+                    💡 <strong>Nota:</strong> Es una estimación, tu real 1RM
+                    puede variar ±5%.
+                  </p>
+                </div>
+              </AccordionContent>
+            </AccordionItem>
+
+            <AccordionItem value="supersets">
+              <AccordionTrigger className="text-sm">
+                <div className="flex items-center gap-2">
+                  <Dumbbell className="h-4 w-4 text-primary" />
+                  ¿Cómo funcionan las Súper Series?
+                </div>
+              </AccordionTrigger>
+              <AccordionContent>
+                <div className="text-sm text-muted-foreground space-y-2">
+                  <p>
+                    Las <strong>Súper Series (SS)</strong> son dos ejercicios
+                    consecutivos que se hacen sin descanso entre ellos.
+                  </p>
+                  <p>Para crear una:</p>
+                  <ol className="list-decimal list-inside space-y-1 ml-2">
+                    <li>Agrega dos ejercicios a tu rutina</li>
+                    <li>Presiona el botón de enlace (🔗) entre ellos</li>
+                    <li>Se mostrarán marcados con "SS"</li>
+                  </ol>
+                  <p className="text-xs mt-2">
+                    💡 <strong>Tip:</strong> Excelentes para músculos
+                    antagonistas (ej: Pecho + Espalda).
+                  </p>
+                </div>
+              </AccordionContent>
+            </AccordionItem>
+
+            <AccordionItem value="offline">
+              <AccordionTrigger className="text-sm">
+                <div className="flex items-center gap-2">
+                  <Database className="h-4 w-4 text-chart-4" />
+                  ¿Mis datos están seguros?
+                </div>
+              </AccordionTrigger>
+              <AccordionContent>
+                <div className="text-sm text-muted-foreground space-y-2">
+                  <p>
+                    <strong>Sí, 100%.</strong> Cuti Traning funciona
+                    completamente offline.
+                  </p>
+                  <p>
+                    Tus datos se guardan en tu navegador (IndexedDB), nunca se
+                    envían a ningún servidor.
+                  </p>
+                  <p>
+                    Usa la función de <strong>Exportar datos</strong>{" "}
+                    regularmente para hacer backups.
+                  </p>
+                  <p className="text-xs mt-2">
+                    💡 <strong>Nota:</strong> Si borras la caché del navegador,
+                    perderás los datos. Exporta antes!
+                  </p>
+                </div>
+              </AccordionContent>
+            </AccordionItem>
+
+            <AccordionItem value="reps">
+              <AccordionTrigger className="text-sm">
+                <div className="flex items-center gap-2">
+                  <Scale className="h-4 w-4 text-accent" />
+                  ¿Puedo poner rangos de repeticiones?
+                </div>
+              </AccordionTrigger>
+              <AccordionContent>
+                <div className="text-sm text-muted-foreground space-y-2">
+                  <p>
+                    <strong>Sí!</strong> En el campo de repeticiones puedes
+                    escribir:
+                  </p>
+                  <ul className="list-disc list-inside space-y-1 ml-2">
+                    <li>
+                      <strong>10</strong> - Exactas 10 repeticiones
+                    </li>
+                    <li>
+                      <strong>8-12</strong> - Entre 8 y 12 repeticiones
+                    </li>
+                    <li>
+                      <strong>12-15</strong> - Rango de 12 a 15
+                    </li>
+                  </ul>
+                  <p className="text-xs mt-2">
+                    💡 <strong>Tip:</strong> Los rangos son ideales para
+                    entrenamiento en volumen.
+                  </p>
+                </div>
+              </AccordionContent>
+            </AccordionItem>
+
+            <AccordionItem value="pr">
+              <AccordionTrigger className="text-sm">
+                <div className="flex items-center gap-2">
+                  <TrendingUp className="h-4 w-4 text-yellow-500" />
+                  ¿Cómo se calculan los PRs?
+                </div>
+              </AccordionTrigger>
+              <AccordionContent>
+                <div className="text-sm text-muted-foreground space-y-2">
+                  <p>
+                    Los <strong>Récords Personales (PRs)</strong> se detectan
+                    automáticamente:
+                  </p>
+                  <ul className="list-disc list-inside space-y-1 ml-2">
+                    <li>
+                      <strong>Mayor Peso:</strong> El peso más alto en una serie
+                    </li>
+                    <li>
+                      <strong>Mayor Reps:</strong> Más repeticiones con el mismo
+                      peso
+                    </li>
+                  </ul>
+                  <p className="text-xs mt-2">
+                    🏆 ¡Los PRs se muestran en el Dashboard!
+                  </p>
+                </div>
+              </AccordionContent>
+            </AccordionItem>
+          </Accordion>
+        </CardContent>
+      </Card>
+
+      {/* Danger Zone */}
+      <Card className="mb-5 border-destructive/30 bg-destructive/5">
+        <CardHeader className="p-5 pb-3">
+          <CardTitle className="text-base text-destructive flex items-center gap-2">
+            <AlertTriangle className="h-5 w-5" />
+            Zona de Peligro
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="p-5 pt-0">
+          <p className="text-sm text-muted-foreground mb-4">
+            Eliminar todos los datos es irreversible. Asegúrate de tener un
+            backup.
+          </p>
           <Button
             variant="destructive"
-            className="w-full"
+            className="w-full h-12 rounded-lg font-medium"
             onClick={handleClearData}
           >
+            <AlertTriangle className="mr-2 h-4 w-4" />
             Eliminar todos los datos
           </Button>
         </CardContent>
       </Card>
+
+      {/* App Info */}
+      <div className="text-center pt-4">
+        <p className="text-sm font-semibold text-foreground">Cuti Traning</p>
+        <p className="text-xs text-muted-foreground mt-1">Versión 1.0.0</p>
+        <p className="text-xs text-muted-foreground mt-1">
+          100% Offline • Tus datos en tu dispositivo
+        </p>
+      </div>
     </div>
-  )
+  );
 }
