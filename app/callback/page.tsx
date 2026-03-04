@@ -1,12 +1,16 @@
 "use client";
 
+// this page uses next/navigation hooks which require dynamic rendering
+export const dynamic = "force-dynamic";
+
 import { useEffect, useState } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 import { Loader2 } from "lucide-react";
 
 const SPOTIFY_CLIENT_ID = process.env.NEXT_PUBLIC_SPOTIFY_CLIENT_ID ?? "";
 const REDIRECT_URI =
-  process.env.NEXT_PUBLIC_SPOTIFY_REDIRECT_URI ?? "http://localhost:3000/callback";
+  process.env.NEXT_PUBLIC_SPOTIFY_REDIRECT_URI ??
+  "http://localhost:3000/callback";
 
 export default function CallbackPage() {
   const searchParams = useSearchParams();
