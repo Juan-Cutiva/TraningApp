@@ -45,6 +45,19 @@ import { useRouter } from "next/navigation";
 import { cn } from "@/lib/utils";
 import { RestTimer } from "@/components/workout/rest-timer";
 import { PlateCalculator } from "@/components/workout/plate-calculator";
+import { SpotifyPlayer } from "@/components/workout/spotify-player";
+
+interface SavedWorkoutSession {
+  routineId: number;
+  exerciseLogs: WorkoutExerciseLog[];
+  currentExIndex: number;
+  elapsed: number;
+  startedAt: number; // Date.now() cuando empezó
+}
+
+function sessionKey(id: number) {
+  return `workout_active_${id}`;
+}
 
 export function WorkoutMode({ routineId }: { routineId: number }) {
   const router = useRouter();
@@ -65,6 +78,16 @@ export function WorkoutMode({ routineId }: { routineId: number }) {
   const startTimeRef = useRef<Date | null>(null);
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
+  // Session guardada para reanudar entrenamiento
+  const [savedSession, setSavedSession] = useState<SavedWorkoutSession | null>(null);
+
+  // Refs para Page Visibility API (evitan stale closures en el listener)
+  const startedRef = useRef(false);
+  const pausedRef = useRef(false);
+  const finishedRef = useRef(false);
+  const elapsedRef = useRef(0);
+  const hiddenAtRef = useRef<number | null>(null);
+
   // Swap features
   const [isSwapOpen, setIsSwapOpen] = useState(false);
   const [swapIndex, setSwapIndex] = useState<number | null>(null);
@@ -77,43 +100,57 @@ export function WorkoutMode({ routineId }: { routineId: number }) {
   // Save Weight Dialog
   const [isSaveWeightOpen, setIsSaveWeightOpen] = useState(false);
   const [manualWeight, setManualWeight] = useState("");
+  const [manualUnit, setManualUnit] = useState("kg");
 
-  // Initialize exercise logs from routine
+  // Inicializar logs desde la rutina (solo pesos del historial, sin sesión guardada)
+  function initFromRoutine(r: NonNullable<typeof routine>) {
+    const initLogs: WorkoutExerciseLog[] = r.exercises.map((ex) => ({
+      exerciseId: ex.id,
+      exerciseName: ex.name,
+      muscleGroup: ex.muscleGroup,
+      supersetId: ex.supersetId,
+      sets: Array.from({ length: ex.sets }, (_, i) => ({
+        setNumber: i + 1,
+        weight: ex.targetWeight,
+        unit: ex.unit || "kg",
+        reps: ex.reps,
+        rpe: "normal" as const,
+        completed: false,
+      })),
+    }));
+
+    setRestDuration(r.exercises[0]?.restSeconds ?? 150);
+
+    Promise.all(r.exercises.map((ex) => getLastWeight(ex.name))).then(
+      (weights) => {
+        weights.forEach((w, i) => {
+          if (w > 0) initLogs[i].sets.forEach((s) => { s.weight = w; });
+        });
+        setExerciseLogs([...initLogs]);
+      },
+    );
+  }
+
+  // Al cargar la rutina: verificar si hay sesión guardada
   useEffect(() => {
-    if (routine && exerciseLogs.length === 0) {
-      const initLogs: WorkoutExerciseLog[] = routine.exercises.map((ex) => ({
-        exerciseId: ex.id,
-        exerciseName: ex.name,
-        muscleGroup: ex.muscleGroup,
-        supersetId: ex.supersetId,
-        sets: Array.from({ length: ex.sets }, (_, i) => ({
-          setNumber: i + 1,
-          weight: ex.targetWeight,
-          unit: ex.unit || "kg",
-          reps: ex.reps,
-          rpe: "normal" as const,
-          completed: false,
-        })),
-      }));
+    if (!routine) return;
 
-      // Load last weights async
-      Promise.all(routine.exercises.map((ex) => getLastWeight(ex.name))).then(
-        (weights) => {
-          weights.forEach((w, i) => {
-            if (w > 0) {
-              initLogs[i].sets.forEach((s) => {
-                s.weight = w;
-              });
-            }
-          });
-          setExerciseLogs([...initLogs]);
-        },
-      );
-
-      setExerciseLogs(initLogs);
-      setRestDuration(routine.exercises[0]?.restSeconds ?? 150);
+    try {
+      const raw = localStorage.getItem(sessionKey(routine.id!));
+      if (raw) {
+        const session: SavedWorkoutSession = JSON.parse(raw);
+        if (session.routineId === routine.id && session.exerciseLogs?.length > 0) {
+          setSavedSession(session);
+          return; // Esperar a que el usuario elija reanudar o empezar nuevo
+        }
+      }
+    } catch {
+      localStorage.removeItem(sessionKey(routine.id!));
     }
-  }, [routine, exerciseLogs.length]);
+
+    initFromRoutine(routine);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [routine?.id]);
 
   const groupedLogs = useMemo(() => {
     const groups: { index: number; log: WorkoutExerciseLog }[][] = [];
@@ -165,7 +202,7 @@ export function WorkoutMode({ routineId }: { routineId: number }) {
     return groups;
   }, [routine?.exercises]);
 
-  // Timer
+  // Timer principal
   useEffect(() => {
     if (started && !paused && !finished) {
       intervalRef.current = setInterval(() => {
@@ -177,6 +214,55 @@ export function WorkoutMode({ routineId }: { routineId: number }) {
     };
   }, [started, paused, finished]);
 
+  // Mantener refs sincronizados para usarlos sin stale closures
+  useEffect(() => { startedRef.current = started; }, [started]);
+  useEffect(() => { pausedRef.current = paused; }, [paused]);
+  useEffect(() => { finishedRef.current = finished; }, [finished]);
+  useEffect(() => { elapsedRef.current = elapsed; }, [elapsed]);
+
+  // Page Visibility API — corrige el timer cuando el usuario vuelve al navegador
+  useEffect(() => {
+    const handleVisibilityChange = () => {
+      if (document.hidden) {
+        hiddenAtRef.current = Date.now();
+      } else {
+        if (
+          hiddenAtRef.current !== null &&
+          startedRef.current &&
+          !pausedRef.current &&
+          !finishedRef.current
+        ) {
+          const secondsGone = Math.floor((Date.now() - hiddenAtRef.current) / 1000);
+          if (secondsGone > 0) {
+            setElapsed((prev) => prev + secondsGone);
+          }
+        }
+        hiddenAtRef.current = null;
+      }
+    };
+
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    return () => document.removeEventListener("visibilitychange", handleVisibilityChange);
+  }, []); // mount once — usa refs para evitar stale closures
+
+  // Auto-guardar sesión en localStorage cuando cambia el progreso
+  useEffect(() => {
+    if (!started || finished || !routine?.id || !startTimeRef.current) return;
+    const session: SavedWorkoutSession = {
+      routineId: routine.id,
+      exerciseLogs,
+      currentExIndex,
+      elapsed: elapsedRef.current,
+      startedAt: startTimeRef.current.getTime(),
+    };
+    try {
+      localStorage.setItem(sessionKey(routine.id), JSON.stringify(session));
+    } catch {
+      // localStorage lleno — ignorar
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [exerciseLogs, currentExIndex]); // se activa cuando hay progreso real
+
   function formatTime(seconds: number) {
     const h = Math.floor(seconds / 3600);
     const m = Math.floor((seconds % 3600) / 60);
@@ -185,6 +271,24 @@ export function WorkoutMode({ routineId }: { routineId: number }) {
       return `${h}:${m.toString().padStart(2, "0")}:${s.toString().padStart(2, "0")}`;
     }
     return `${m.toString().padStart(2, "0")}:${s.toString().padStart(2, "0")}`;
+  }
+
+  function handleResumeWorkout() {
+    if (!savedSession || !routine) return;
+    setExerciseLogs(savedSession.exerciseLogs);
+    setCurrentExIndex(savedSession.currentExIndex);
+    setElapsed(savedSession.elapsed);
+    setRestDuration(routine.exercises[savedSession.currentExIndex]?.restSeconds ?? 150);
+    startTimeRef.current = new Date(savedSession.startedAt);
+    setStarted(true);
+    setSavedSession(null);
+  }
+
+  function handleDiscardSession() {
+    if (!routine) return;
+    localStorage.removeItem(sessionKey(routine.id!));
+    setSavedSession(null);
+    initFromRoutine(routine);
   }
 
   function handleStart() {
@@ -245,26 +349,42 @@ export function WorkoutMode({ routineId }: { routineId: number }) {
   }
 
   async function completeSet(exIndex: number, setIndex: number) {
-    // Get current weight value, default to 0 if empty
-    const currentWeightRaw = exerciseLogs[exIndex]?.sets[setIndex]?.weight;
+    const exLog = exerciseLogs[exIndex];
+    if (!exLog) return;
+
+    const currentSet = exLog.sets[setIndex];
+    if (!currentSet) return;
+
+    // Capturar peso antes del state update para evitar stale closure
     const currentWeight =
-      currentWeightRaw === "" ? 0 : Number(currentWeightRaw) || 0;
+      currentSet.weight === "" ? 0 : Number(currentSet.weight) || 0;
+
+    // Marcar el set como completado
     updateSet(exIndex, setIndex, "completed", true);
 
-    // Check for PRs
-    const exLog = exerciseLogs[exIndex];
+    // Construir lista de sets completados incluyendo el que acabamos de completar
+    // (no leer de exerciseLogs porque el state update aún no se aplicó)
+    const alreadyCompleted = exLog.sets.filter(
+      (s, i) => s.completed && i !== setIndex,
+    );
     const completedSets = [
-      ...exLog.sets.filter((s) => s.completed),
-      { ...exLog.sets[setIndex], completed: true, weight: currentWeight },
+      ...alreadyCompleted,
+      { ...currentSet, completed: true, weight: currentWeight },
     ];
-    const prs = await checkAndUpdatePRs(exLog.exerciseName, completedSets);
+
+    // Verificar PRs con los datos correctos
+    const prs = await checkAndUpdatePRs(
+      exLog.exerciseName,
+      completedSets,
+      exLog.muscleGroup,
+    );
     if (prs.length > 0) {
       setNewPRs(prs.map((p) => `${p.exerciseName}: ${p.details}`));
       setShowPR(true);
       setTimeout(() => setShowPR(false), 3000);
     }
 
-    // Get the rest duration for this exercise from routine
+    // Obtener duración de descanso para este ejercicio
     if (routine) {
       const originalExercise = routine.exercises.find(
         (e) => e.id === exLog.exerciseId,
@@ -274,7 +394,8 @@ export function WorkoutMode({ routineId }: { routineId: number }) {
       }
     }
 
-    // Show rest timer
+    // Reiniciar timer (key increment fuerza remount de RestTimer)
+    setRestKey((k) => k + 1);
     setShowRest(true);
   }
 
@@ -282,17 +403,26 @@ export function WorkoutMode({ routineId }: { routineId: number }) {
     if (!routine || currentGroup.length === 0) return;
 
     const weight = parseFloat(manualWeight) || 0;
-    const currentUnit = currentGroup[0]?.log.sets[0]?.unit || "kg";
 
     const updatedExercises = routine.exercises.map((ex) => {
       const match = currentGroup.find((g) => g.log.exerciseId === ex.id);
       if (match) {
-        return { ...ex, targetWeight: weight, unit: currentUnit };
+        return { ...ex, targetWeight: weight, unit: manualUnit };
       }
       return ex;
     });
 
     await db.routines.update(routine.id!, { exercises: updatedExercises });
+
+    // Also update live exerciseLogs so unit change is immediately reflected
+    currentGroup.forEach(({ index: exIdx }) => {
+      setExerciseLogs((prev) => {
+        const updated = [...prev];
+        const sets = updated[exIdx].sets.map((s) => ({ ...s, unit: manualUnit }));
+        updated[exIdx] = { ...updated[exIdx], sets };
+        return updated;
+      });
+    });
 
     setWeightUpdated(true);
     setIsSaveWeightOpen(false);
@@ -303,20 +433,27 @@ export function WorkoutMode({ routineId }: { routineId: number }) {
   async function handleFinish() {
     if (!routine || !startTimeRef.current) return;
 
+    const endTime = new Date();
     const log: Omit<WorkoutLog, "id"> = {
       routineId: routine.id!,
       routineName: routine.name,
-      date: new Date(),
+      date: endTime,
       startTime: startTimeRef.current,
-      endTime: new Date(),
+      endTime,
       duration: elapsed,
-      totalVolume: 0,
       completed: true,
       exercises: exerciseLogs,
     };
 
-    await db.workoutLogs.add(log as WorkoutLog);
-    setFinished(true);
+    try {
+      await db.workoutLogs.add(log as WorkoutLog);
+      // Limpiar sesión guardada al terminar con éxito
+      localStorage.removeItem(sessionKey(routine.id!));
+      setFinished(true);
+    } catch (err) {
+      console.error("Error guardando el entrenamiento:", err);
+      alert("No se pudo guardar el entrenamiento. Intenta de nuevo.");
+    }
   }
 
   const totalSets =
@@ -398,6 +535,81 @@ export function WorkoutMode({ routineId }: { routineId: number }) {
         >
           Volver al Dashboard
         </Button>
+      </div>
+    );
+  }
+
+  // Pantalla de sesión guardada — reanudar o empezar nuevo
+  if (!started && savedSession) {
+    const completedCount = savedSession.exerciseLogs.reduce(
+      (acc, ex) => acc + ex.sets.filter((s) => s.completed).length,
+      0,
+    );
+    const totalCount = savedSession.exerciseLogs.reduce(
+      (acc, ex) => acc + ex.sets.length,
+      0,
+    );
+    const savedElapsedStr = formatTime(savedSession.elapsed);
+
+    return (
+      <div className="flex min-h-dvh flex-col bg-background">
+        <div className="flex items-center gap-3 px-4 pt-6">
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={() => router.push("/routines")}
+          >
+            <ArrowLeft className="h-5 w-5" />
+          </Button>
+          <h1 className="text-xl font-bold text-foreground">{routine.name}</h1>
+        </div>
+
+        <div className="flex flex-1 flex-col items-center justify-center px-6 gap-6">
+          <div className="w-full max-w-sm rounded-2xl border border-primary/30 bg-primary/5 p-6 text-center">
+            <div className="mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-primary/10 mx-auto">
+              <Timer className="h-8 w-8 text-primary" />
+            </div>
+            <h2 className="text-lg font-bold text-foreground mb-1">
+              Entrenamiento en curso
+            </h2>
+            <p className="text-sm text-muted-foreground mb-4">
+              Tenés progreso guardado de esta rutina
+            </p>
+            <div className="grid grid-cols-2 gap-3 mb-2">
+              <div className="rounded-xl bg-card border border-border p-3">
+                <p className="text-xs text-muted-foreground">Series</p>
+                <p className="text-xl font-bold text-foreground">
+                  {completedCount}/{totalCount}
+                </p>
+              </div>
+              <div className="rounded-xl bg-card border border-border p-3">
+                <p className="text-xs text-muted-foreground">Tiempo</p>
+                <p className="text-xl font-bold text-foreground">
+                  {savedElapsedStr}
+                </p>
+              </div>
+            </div>
+          </div>
+
+          <div className="w-full max-w-sm flex flex-col gap-3">
+            <Button
+              onClick={handleResumeWorkout}
+              className="w-full rounded-xl py-6 text-base font-bold"
+              size="lg"
+            >
+              <Play className="mr-2 h-5 w-5" />
+              Retomar entrenamiento
+            </Button>
+            <Button
+              variant="outline"
+              onClick={handleDiscardSession}
+              className="w-full rounded-xl py-5 text-base"
+              size="lg"
+            >
+              Empezar de nuevo
+            </Button>
+          </div>
+        </div>
       </div>
     );
   }
@@ -536,6 +748,7 @@ export function WorkoutMode({ routineId }: { routineId: number }) {
       {/* Rest Timer Overlay */}
       {showRest && (
         <RestTimer
+          key={restKey}
           duration={restDuration}
           onChangeDuration={setRestDuration}
           onClose={() => setShowRest(false)}
@@ -660,7 +873,7 @@ export function WorkoutMode({ routineId }: { routineId: number }) {
       </div>
 
       {/* Sets */}
-      <div className="flex-1 overflow-auto px-4 pt-4">
+      <div className={cn("flex-1 overflow-auto px-4 pt-4", showRest && "pb-44")}>
         {currentGroup.map(({ index: flatIndex, log }) => {
           const maxWeight = Math.max(
             ...log.sets.map((s) => {
@@ -701,6 +914,7 @@ export function WorkoutMode({ routineId }: { routineId: number }) {
                         setManualWeight(
                           maxWeight > 0 ? maxWeight.toString() : "",
                         );
+                        setManualUnit(log.sets[0]?.unit || "kg");
                         setIsSaveWeightOpen(true);
                       }}
                       className="h-6 px-2 text-xs text-muted-foreground"
@@ -742,15 +956,21 @@ export function WorkoutMode({ routineId }: { routineId: number }) {
                         className="h-9 min-w-0 flex-1 text-center text-sm px-1"
                         placeholder="0"
                       />
-                      <Input
-                        type="text"
+                      <Select
                         value={set.unit}
-                        onChange={(e) =>
-                          updateSet(flatIndex, si, "unit", e.target.value)
+                        onValueChange={(val) =>
+                          updateSet(flatIndex, si, "unit", val)
                         }
                         disabled={isCompleted}
-                        className="h-9 w-12 p-0 shrink-0 text-center text-xs font-bold uppercase text-muted-foreground"
-                      />
+                      >
+                        <SelectTrigger className="h-9 w-14 shrink-0 px-1.5 text-xs font-bold uppercase text-muted-foreground">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent className="z-[70]">
+                          <SelectItem value="kg">kg</SelectItem>
+                          <SelectItem value="lb">lb</SelectItem>
+                        </SelectContent>
+                      </Select>
                     </div>
                     <div className="col-span-3">
                       <Input
@@ -765,9 +985,13 @@ export function WorkoutMode({ routineId }: { routineId: number }) {
                     </div>
                     <div className="col-span-2 flex justify-center">
                       {isCompleted ? (
-                        <div className="flex h-9 w-9 items-center justify-center rounded-full bg-success">
+                        <button
+                          className="flex h-9 w-9 items-center justify-center rounded-full bg-success hover:bg-success/70 active:scale-95 transition-all"
+                          onClick={() => updateSet(flatIndex, si, "completed", false)}
+                          title="Toca para desmarcar"
+                        >
                           <Check className="h-4 w-4 text-success-foreground" />
-                        </div>
+                        </button>
                       ) : (
                         <Button
                           size="icon"
@@ -800,6 +1024,7 @@ export function WorkoutMode({ routineId }: { routineId: number }) {
                       setManualWeight(
                         maxWeightSingle > 0 ? maxWeightSingle.toString() : "",
                       );
+                      setManualUnit(currentGroup[0]?.log.sets[0]?.unit || "kg");
                       setIsSaveWeightOpen(true);
                     }}
                     disabled={weightUpdated}
@@ -902,7 +1127,7 @@ export function WorkoutMode({ routineId }: { routineId: number }) {
           <div className="flex flex-col gap-4 py-4">
             <div className="flex flex-col gap-2">
               <label className="text-sm font-medium">
-                Ingresa el peso que deseas guardar
+                Peso base para esta rutina
               </label>
               <div className="flex items-center gap-2">
                 <Input
@@ -914,9 +1139,15 @@ export function WorkoutMode({ routineId }: { routineId: number }) {
                   className="flex-1"
                   autoFocus
                 />
-                <span className="text-sm font-bold text-muted-foreground uppercase">
-                  {currentGroup[0]?.log.sets[0]?.unit || "kg"}
-                </span>
+                <Select value={manualUnit} onValueChange={setManualUnit}>
+                  <SelectTrigger className="w-20">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent className="z-[70]">
+                    <SelectItem value="kg">kg</SelectItem>
+                    <SelectItem value="lb">lb</SelectItem>
+                  </SelectContent>
+                </Select>
               </div>
             </div>
           </div>
@@ -943,6 +1174,9 @@ export function WorkoutMode({ routineId }: { routineId: number }) {
         onOpenChange={setIsCalculatorOpen}
         defaultUnit={currentGroup[0]?.log.sets[0]?.unit || "kg"}
       />
+
+      {/* Spotify Player - Floating widget during workout */}
+      <SpotifyPlayer />
     </div>
   );
 }

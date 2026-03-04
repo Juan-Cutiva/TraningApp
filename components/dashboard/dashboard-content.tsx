@@ -43,9 +43,10 @@ export function DashboardContent() {
   const weekEnd = endOfWeek(now, { weekStartsOn: 1 });
 
   const weekLogs =
-    workoutLogs?.filter((l) =>
-      isWithinInterval(new Date(l.date), { start: weekStart, end: weekEnd }),
-    ) ?? [];
+    workoutLogs?.filter((l) => {
+      const d = new Date(l.date);
+      return !isNaN(d.getTime()) && isWithinInterval(d, { start: weekStart, end: weekEnd });
+    }) ?? [];
 
   const weeklyDuration = weekLogs.reduce((s, l) => s + l.duration, 0);
 
@@ -65,17 +66,19 @@ export function DashboardContent() {
   const weightChange =
     latestWeight && firstWeight ? latestWeight - firstWeight : 0;
 
-  // Goal progress
-  const goalProgress =
-    weightGoal && latestWeight
-      ? weightGoal.targetWeight > weightGoal.startWeight
-        ? ((latestWeight - weightGoal.startWeight) /
-            (weightGoal.targetWeight - weightGoal.startWeight)) *
-          100
-        : ((weightGoal.startWeight - latestWeight) /
-            (weightGoal.startWeight - weightGoal.targetWeight)) *
-          100
-      : null;
+  // Goal progress — con guard contra división por cero y resultado NaN/Infinity
+  const goalProgress = (() => {
+    if (!weightGoal || !latestWeight) return null;
+    const { targetWeight, startWeight } = weightGoal;
+    const range = targetWeight - startWeight;
+    if (range === 0) return 100; // ya en el objetivo
+    const raw =
+      range > 0
+        ? ((latestWeight - startWeight) / range) * 100
+        : ((startWeight - latestWeight) / -range) * 100;
+    if (!isFinite(raw) || isNaN(raw)) return 0;
+    return Math.min(100, Math.max(0, raw));
+  })();
 
   return (
     <div className="mx-auto max-w-lg px-4 pt-6">

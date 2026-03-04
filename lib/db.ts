@@ -31,7 +31,6 @@ export interface WorkoutLog {
   startTime: Date;
   endTime: Date | null;
   duration: number; // seconds
-  totalVolume: number;
   completed: boolean;
   exercises: WorkoutExerciseLog[];
 }
@@ -83,6 +82,10 @@ export interface UserSettings {
   theme: "light" | "dark" | "system";
   bodyWeight: number | null;
   defaultUnit: string;
+  // Music widget settings
+  musicService: "spotify" | "youtube" | null;
+  musicEmbedUrl: string;
+  showMusicWidget: boolean;
 }
 
 export interface BodyWeightEntry {
@@ -138,6 +141,9 @@ export async function getOrCreateSettings(): Promise<UserSettings> {
     theme: "dark",
     bodyWeight: null,
     defaultUnit: "kg",
+    musicService: null,
+    musicEmbedUrl: "",
+    showMusicWidget: false,
   });
   return (await db.userSettings.get(id))!;
 }
@@ -150,11 +156,13 @@ export async function getTodayRoutine(): Promise<Routine | undefined> {
 export async function getExerciseHistory(
   exerciseName: string,
 ): Promise<WorkoutExerciseLog[]> {
+  // orderBy + reverse() da DESC correcto; .reverse().sortBy() ignoraba el reverse
   const logs = await db.workoutLogs
     .where("completed")
     .equals(1)
-    .reverse()
-    .sortBy("date");
+    .toArray();
+  // Ordenar por fecha descendente (más reciente primero)
+  logs.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
   const history: WorkoutExerciseLog[] = [];
   for (const log of logs) {
     const ex = log.exercises.find((e) => e.exerciseName === exerciseName);
