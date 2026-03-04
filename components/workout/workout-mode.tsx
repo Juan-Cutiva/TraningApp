@@ -102,6 +102,9 @@ export function WorkoutMode({ routineId }: { routineId: number }) {
   const [manualWeight, setManualWeight] = useState("");
   const [manualUnit, setManualUnit] = useState("kg");
 
+  // Pesos de la última sesión por ejercicio (para sugerencia de progresión)
+  const lastWeightsRef = useRef<Map<string, number>>(new Map());
+
   // Inicializar logs desde la rutina (solo pesos del historial, sin sesión guardada)
   function initFromRoutine(r: NonNullable<typeof routine>) {
     const initLogs: WorkoutExerciseLog[] = r.exercises.map((ex) => ({
@@ -124,7 +127,10 @@ export function WorkoutMode({ routineId }: { routineId: number }) {
     Promise.all(r.exercises.map((ex) => getLastWeight(ex.name))).then(
       (weights) => {
         weights.forEach((w, i) => {
-          if (w > 0) initLogs[i].sets.forEach((s) => { s.weight = w; });
+          if (w > 0) {
+            initLogs[i].sets.forEach((s) => { s.weight = w; });
+            lastWeightsRef.current.set(r.exercises[i].name, w);
+          }
         });
         setExerciseLogs([...initLogs]);
       },
@@ -196,7 +202,7 @@ export function WorkoutMode({ routineId }: { routineId: number }) {
     routine.exercises.forEach((ex, index) => {
       const prevEx = index > 0 ? routine.exercises[index - 1] : null;
       const isSuperset =
-        prevEx?.supersetId && prevEx.supersetId === ex.supersetId;
+        !!(prevEx?.supersetId && prevEx.supersetId === ex.supersetId);
       groups.push({ exercise: ex, isSuperset });
     });
     return groups;
@@ -358,6 +364,12 @@ export function WorkoutMode({ routineId }: { routineId: number }) {
     // Capturar peso antes del state update para evitar stale closure
     const currentWeight =
       currentSet.weight === "" ? 0 : Number(currentSet.weight) || 0;
+
+    // Validar peso 0
+    if (currentWeight === 0) {
+      const ok = window.confirm("Completar serie sin peso registrado. ¿Continuar?");
+      if (!ok) return;
+    }
 
     // Marcar el set como completado
     updateSet(exIndex, setIndex, "completed", true);
@@ -846,6 +858,17 @@ export function WorkoutMode({ routineId }: { routineId: number }) {
               <p className="text-xs text-muted-foreground">
                 {currentGroup[0]?.log.muscleGroup}
               </p>
+              {(() => {
+                const exName = currentGroup[0]?.log.exerciseName;
+                const last = exName ? lastWeightsRef.current.get(exName) : undefined;
+                if (!last) return null;
+                const unit = currentGroup[0]?.log.sets[0]?.unit ?? "kg";
+                return (
+                  <p className="text-xs text-muted-foreground/70 mt-0.5">
+                    Última: {last} {unit} · Sugerido: {last + 2.5} {unit}
+                  </p>
+                );
+              })()}
               <Button
                 variant="ghost"
                 size="sm"
@@ -953,6 +976,7 @@ export function WorkoutMode({ routineId }: { routineId: number }) {
                           handleWeightChange(flatIndex, si, e.target.value)
                         }
                         disabled={isCompleted}
+                        aria-label={`Peso serie ${set.setNumber}`}
                         className="h-9 min-w-0 flex-1 text-center text-sm px-1"
                         placeholder="0"
                       />
@@ -963,10 +987,13 @@ export function WorkoutMode({ routineId }: { routineId: number }) {
                         }
                         disabled={isCompleted}
                       >
-                        <SelectTrigger className="h-9 w-14 shrink-0 px-1.5 text-xs font-bold uppercase text-muted-foreground">
+                        <SelectTrigger
+                          aria-label={`Unidad serie ${set.setNumber}`}
+                          className="h-9 w-14 shrink-0 px-1.5 text-xs font-bold uppercase text-muted-foreground"
+                        >
                           <SelectValue />
                         </SelectTrigger>
-                        <SelectContent className="z-[70]">
+                        <SelectContent className="z-70">
                           <SelectItem value="kg">kg</SelectItem>
                           <SelectItem value="lb">lb</SelectItem>
                         </SelectContent>
@@ -980,6 +1007,8 @@ export function WorkoutMode({ routineId }: { routineId: number }) {
                           updateSet(flatIndex, si, "reps", e.target.value)
                         }
                         disabled={isCompleted}
+                        aria-label={`Reps serie ${set.setNumber}`}
+                        placeholder="—"
                         className="h-9 text-center text-sm"
                       />
                     </div>
@@ -1028,7 +1057,7 @@ export function WorkoutMode({ routineId }: { routineId: number }) {
                       setIsSaveWeightOpen(true);
                     }}
                     disabled={weightUpdated}
-                    className="text-xs text-muted-foreground w-full max-w-[200px]"
+                    className="text-xs text-muted-foreground w-full max-w-50"
                   >
                     {weightUpdated
                       ? "¡Peso Guardado!"
@@ -1076,26 +1105,27 @@ export function WorkoutMode({ routineId }: { routineId: number }) {
 
       {/* Swap Exercise Dialog */}
       <Dialog open={isSwapOpen} onOpenChange={setIsSwapOpen}>
-        <DialogContent className="sm:max-w-md w-[90vw] rounded-xl z-[60]">
+        <DialogContent className="sm:max-w-md w-[90vw] rounded-xl z-60">
           <DialogHeader>
             <DialogTitle>Sustituir Ejercicio</DialogTitle>
           </DialogHeader>
           <div className="flex flex-col gap-4 py-4">
             <div className="flex flex-col gap-2">
-              <label className="text-sm font-medium">Nuevo Ejercicio</label>
+              <label htmlFor="swap-ex-name" className="text-sm font-medium">Nuevo Ejercicio</label>
               <Input
+                id="swap-ex-name"
                 placeholder="Ej. Press inclinado"
                 value={newExName}
                 onChange={(e) => setNewExName(e.target.value)}
               />
             </div>
             <div className="flex flex-col gap-2">
-              <label className="text-sm font-medium">Grupo Muscular</label>
+              <label htmlFor="swap-ex-muscle" className="text-sm font-medium">Grupo Muscular</label>
               <Select value={newExMuscle} onValueChange={setNewExMuscle}>
-                <SelectTrigger>
+                <SelectTrigger id="swap-ex-muscle">
                   <SelectValue placeholder="Selecciona..." />
                 </SelectTrigger>
-                <SelectContent className="z-[70]">
+                <SelectContent className="z-70">
                   <SelectItem value="Pecho">Pecho</SelectItem>
                   <SelectItem value="Espalda">Espalda</SelectItem>
                   <SelectItem value="Piernas">Piernas</SelectItem>
@@ -1120,17 +1150,18 @@ export function WorkoutMode({ routineId }: { routineId: number }) {
 
       {/* Save Weight Dialog */}
       <Dialog open={isSaveWeightOpen} onOpenChange={setIsSaveWeightOpen}>
-        <DialogContent className="sm:max-w-md w-[90vw] rounded-xl z-[60]">
+        <DialogContent className="sm:max-w-md w-[90vw] rounded-xl z-60">
           <DialogHeader>
             <DialogTitle>Guardar Peso Base</DialogTitle>
           </DialogHeader>
           <div className="flex flex-col gap-4 py-4">
             <div className="flex flex-col gap-2">
-              <label className="text-sm font-medium">
+              <label htmlFor="manual-weight" className="text-sm font-medium">
                 Peso base para esta rutina
               </label>
               <div className="flex items-center gap-2">
                 <Input
+                  id="manual-weight"
                   type="text"
                   inputMode="decimal"
                   placeholder="Peso"
@@ -1143,7 +1174,7 @@ export function WorkoutMode({ routineId }: { routineId: number }) {
                   <SelectTrigger className="w-20">
                     <SelectValue />
                   </SelectTrigger>
-                  <SelectContent className="z-[70]">
+                  <SelectContent className="z-70">
                     <SelectItem value="kg">kg</SelectItem>
                     <SelectItem value="lb">lb</SelectItem>
                   </SelectContent>

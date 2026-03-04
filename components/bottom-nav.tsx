@@ -27,7 +27,10 @@ export function BottomNav() {
   if (pathname.startsWith("/workout/")) return null;
 
   return (
-    <nav className="fixed bottom-0 left-0 right-0 z-50 border-t border-border bg-card/95 backdrop-blur-md safe-area-bottom">
+    <nav
+      aria-label="Navegación principal"
+      className="fixed bottom-0 left-0 right-0 z-50 border-t border-border bg-card/95 backdrop-blur-md safe-area-bottom"
+    >
       <div className="mx-auto flex max-w-lg items-center justify-around px-1 py-1">
         {navItems.map((item) => {
           const isActive =
@@ -38,6 +41,8 @@ export function BottomNav() {
             <Link
               key={item.href}
               href={item.href}
+              aria-current={isActive ? "page" : undefined}
+              aria-label={item.label}
               className={cn(
                 "flex flex-col items-center gap-0.5 rounded-lg px-1.5 py-1.5 text-[9px] transition-colors",
                 isActive
@@ -47,8 +52,9 @@ export function BottomNav() {
             >
               <item.icon
                 className={cn("h-4 w-4 mb-0.5", isActive && "stroke-[2.5px]")}
+                aria-hidden="true"
               />
-              <span className="font-medium">{item.label}</span>
+              <span className="font-medium" aria-hidden="true">{item.label}</span>
             </Link>
           );
         })}

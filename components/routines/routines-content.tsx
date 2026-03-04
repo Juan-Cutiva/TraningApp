@@ -2,7 +2,12 @@
 
 import { useState } from "react";
 import { useLiveQuery } from "dexie-react-hooks";
-import { db, type Routine, type RoutineExercise } from "@/lib/db";
+import {
+  db,
+  estimateRoutineDuration,
+  type Routine,
+  type RoutineExercise,
+} from "@/lib/db";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -38,6 +43,7 @@ import {
   ChevronUp,
   ChevronDown,
   Link2,
+  Copy,
 } from "lucide-react";
 import Link from "next/link";
 
@@ -90,6 +96,13 @@ function parseNumber(value: string | number, defaultValue: number): number {
 
 export function RoutinesContent() {
   const routines = useLiveQuery(() => db.routines.toArray());
+
+  const exerciseSuggestions = useLiveQuery(async () => {
+    const logs = await db.workoutLogs.toArray();
+    const names = new Set<string>();
+    logs.forEach((l) => l.exercises.forEach((e) => names.add(e.exerciseName)));
+    return Array.from(names).sort();
+  }, []);
 
   // Routine sheet state
   const [sheetOpen, setSheetOpen] = useState(false);
@@ -240,6 +253,18 @@ export function RoutinesContent() {
     }
   }
 
+  function cloneRoutine(routine: Routine) {
+    setEditingRoutine(null);
+    setRoutineName(`Copia de ${routine.name}`);
+    setRoutineDay(
+      routine.dayOfWeek !== null && routine.dayOfWeek !== undefined
+        ? String(routine.dayOfWeek)
+        : "none",
+    );
+    setExercises(routine.exercises.map((ex) => ({ ...ex, id: generateId() })));
+    setSheetOpen(true);
+  }
+
   return (
     <div className="mx-auto max-w-lg px-4 pt-6">
       <div className="mb-6 flex items-center justify-between">
@@ -263,7 +288,7 @@ export function RoutinesContent() {
             <p className="text-lg font-semibold text-foreground">
               Sin rutinas creadas
             </p>
-            <p className="text-sm text-muted-foreground mt-1 max-w-[250px]">
+            <p className="text-sm text-muted-foreground mt-1 max-w-62.5">
               Crea tu primera rutina para empezar a entrenar
             </p>
             <Button onClick={openNewRoutine} className="mt-5 gap-1.5 px-6">
@@ -296,12 +321,23 @@ export function RoutinesContent() {
                         {routine.dayOfWeek !== null
                           ? DAYS[routine.dayOfWeek]
                           : "Sin asignar"}{" "}
-                        • {routine.exercises.length} ejercicios
+                        • {routine.exercises.length} ej. • ~
+                        {Math.round(estimateRoutineDuration(routine) / 60)} min
+                        aprox
                       </p>
                     </div>
                     <ChevronRight className="h-5 w-5 text-muted-foreground/50" />
                   </Link>
                   <div className="flex items-center gap-1 pr-3">
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-9 w-9"
+                      title="Duplicar rutina"
+                      onClick={() => cloneRoutine(routine)}
+                    >
+                      <Copy className="h-4 w-4" />
+                    </Button>
                     <Button
                       variant="ghost"
                       size="icon"
@@ -505,6 +541,11 @@ export function RoutinesContent() {
           </DialogHeader>
 
           <div className="flex flex-col gap-4 py-2">
+            <datalist id="exercise-suggestions">
+              {exerciseSuggestions?.map((name) => (
+                <option key={name} value={name} />
+              ))}
+            </datalist>
             <div>
               <Label className="text-sm font-medium">
                 Nombre del ejercicio
@@ -514,6 +555,8 @@ export function RoutinesContent() {
                 onChange={(e) => setExName(e.target.value)}
                 placeholder="Ej: Press banca, Sentadilla..."
                 className="mt-1 h-11"
+                list="exercise-suggestions"
+                autoComplete="off"
               />
             </div>
 
@@ -584,6 +627,9 @@ export function RoutinesContent() {
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
+                  <SelectItem value="10">10s (10 seg)</SelectItem>
+                  <SelectItem value="15">15s (15 seg)</SelectItem>
+                  <SelectItem value="30">30s (30 seg)</SelectItem>
                   <SelectItem value="60">60s (1 min)</SelectItem>
                   <SelectItem value="90">90s (1.5 min)</SelectItem>
                   <SelectItem value="120">120s (2 min)</SelectItem>

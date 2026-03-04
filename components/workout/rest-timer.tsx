@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useRef, useCallback } from "react";
 import { Button } from "@/components/ui/button";
+import { Progress } from "@/components/ui/progress";
 import { X, Plus, Minus, Timer, Pause, Play } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -23,10 +24,10 @@ function playChime() {
 
     // Ascending chord — four notes, higher gain for audibility
     const notes = [
-      { freq: 523.25, start: 0,    end: 0.45 }, // C5
-      { freq: 659.25, start: 0.2,  end: 0.65 }, // E5
-      { freq: 783.99, start: 0.4,  end: 0.9  }, // G5
-      { freq: 1046.5, start: 0.65, end: 1.3  }, // C6
+      { freq: 523.25, start: 0, end: 0.45 }, // C5
+      { freq: 659.25, start: 0.2, end: 0.65 }, // E5
+      { freq: 783.99, start: 0.4, end: 0.9 }, // G5
+      { freq: 1046.5, start: 0.65, end: 1.3 }, // C6
     ];
 
     notes.forEach(({ freq, start, end }) => {
@@ -38,7 +39,7 @@ function playChime() {
       gain.connect(ctx.destination);
 
       gain.gain.setValueAtTime(0, now + start);
-      gain.gain.linearRampToValueAtTime(0.45, now + start + 0.05);
+      gain.gain.linearRampToValueAtTime(0.85, now + start + 0.05);
       gain.gain.exponentialRampToValueAtTime(0.001, now + end);
 
       osc.start(now + start);
@@ -52,7 +53,7 @@ function playChime() {
     accent.frequency.value = 880;
     accent.connect(accentGain);
     accentGain.connect(ctx.destination);
-    accentGain.gain.setValueAtTime(0.15, now);
+    accentGain.gain.setValueAtTime(0.35, now);
     accentGain.gain.exponentialRampToValueAtTime(0.001, now + 0.12);
     accent.start(now);
     accent.stop(now + 0.15);
@@ -126,44 +127,51 @@ export function RestTimer({
   const progress =
     duration > 0 ? ((duration - remaining) / duration) * 100 : 100;
 
+  // Compact vertical card — max 280px wide so it never overflows on mobile
   return (
-    <div className="fixed bottom-32 left-1/2 -translate-x-1/2 z-[60]">
-      {/* Main Timer Card */}
+    <div className="fixed bottom-32 left-1/2 -translate-x-1/2 z-90 w-[min(90vw,280px)]">
+      {/* Floating badge */}
       <div
         className={cn(
-          "flex items-center gap-3 rounded-2xl px-5 py-3.5 shadow-2xl border-2 animate-in slide-in-from-bottom-4 fade-in",
+          "absolute -top-3 left-1/2 -translate-x-1/2 flex items-center gap-1 px-3 py-1 text-[10px] font-bold rounded-full shadow-lg whitespace-nowrap",
           finished
-            ? "bg-gradient-to-r from-green-500/25 to-emerald-500/25 border-green-500/70 animate-pulse"
+            ? "bg-green-500 text-white animate-bounce"
             : paused
-              ? "bg-gradient-to-r from-card to-card border-yellow-500/40"
-              : "bg-gradient-to-r from-card to-card border-primary/30",
+              ? "bg-yellow-500 text-white"
+              : "bg-primary text-primary-foreground animate-bounce",
         )}
       >
-        {/* Timer Icon */}
+        <Timer className="h-3 w-3" />
+        <span>
+          {finished ? "¡DESCANSASTE!" : paused ? "EN PAUSA" : "DESCANSO"}
+        </span>
+      </div>
+
+      {/* Card */}
+      <div
+        className={cn(
+          "rounded-2xl shadow-2xl border-2 animate-in slide-in-from-bottom-4 fade-in overflow-hidden",
+          finished
+            ? "border-green-500/70 animate-pulse"
+            : paused
+              ? "border-yellow-500/40"
+              : "border-primary/30",
+        )}
+      >
+        {/* Header row: label + close */}
         <div
           className={cn(
-            "flex items-center justify-center w-12 h-12 rounded-xl shrink-0",
+            "flex items-center justify-between px-4 pt-4 pb-1",
             finished
-              ? "bg-green-500/30 text-green-400"
+              ? "bg-green-500/15"
               : paused
-                ? "bg-yellow-500/20 text-yellow-500"
-                : "bg-primary/15 text-primary",
+                ? "bg-yellow-500/10"
+                : "bg-card",
           )}
         >
-          {finished ? (
-            <span className="text-2xl">✓</span>
-          ) : paused ? (
-            <Pause className="h-6 w-6" />
-          ) : (
-            <Timer className="h-6 w-6" />
-          )}
-        </div>
-
-        {/* Time Display */}
-        <div className="flex flex-col min-w-[70px]">
           <span
             className={cn(
-              "text-[10px] font-bold uppercase tracking-widest",
+              "text-[11px] font-bold uppercase tracking-widest",
               finished
                 ? "text-green-400"
                 : paused
@@ -171,11 +179,43 @@ export function RestTimer({
                   : "text-muted-foreground",
             )}
           >
-            {finished ? "¡Listo!" : paused ? "Pausado" : "Descanso"}
+            {finished
+              ? "¡Listo para el siguiente!"
+              : paused
+                ? "Pausado"
+                : "Tiempo de descanso"}
           </span>
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={onClose}
+            aria-label="Cerrar temporizador"
+            title="Cerrar temporizador"
+            className={cn(
+              "h-7 w-7 rounded-lg shrink-0",
+              finished
+                ? "text-green-400 hover:text-green-300"
+                : "text-muted-foreground",
+            )}
+          >
+            <X className="h-4 w-4" aria-hidden="true" />
+          </Button>
+        </div>
+
+        {/* Big time */}
+        <div
+          className={cn(
+            "flex items-center justify-center py-3",
+            finished
+              ? "bg-green-500/15"
+              : paused
+                ? "bg-yellow-500/10"
+                : "bg-card",
+          )}
+        >
           <span
             className={cn(
-              "text-2xl font-bold font-mono leading-none",
+              "text-5xl font-bold font-mono tabular-nums",
               finished
                 ? "text-green-400"
                 : paused
@@ -187,100 +227,83 @@ export function RestTimer({
           </span>
         </div>
 
-        {/* Progress Bar */}
+        {/* Progress bar */}
         {!finished && (
-          <div className="w-20 h-2 bg-secondary rounded-full overflow-hidden shrink-0">
-            <div
-              className={cn(
-                "h-full transition-all duration-1000 ease-linear rounded-full",
-                paused ? "bg-yellow-500" : "bg-primary",
-              )}
-              style={{ width: `${progress}%` }}
+          <div
+            className={cn("px-4 pb-3", paused ? "bg-yellow-500/10" : "bg-card")}
+          >
+            <Progress
+              value={progress}
+              className={cn("h-1.5", paused ? "[&>div]:bg-yellow-500" : "")}
             />
           </div>
         )}
 
         {/* Controls */}
-        {!finished && (
-          <div className="flex items-center gap-1">
-            <Button
-              variant="outline"
-              size="icon"
-              className="h-9 w-9 rounded-lg border-border"
-              onClick={() => {
-                const next = Math.max(30, duration - 30);
-                onChangeDuration(next);
-              }}
-            >
-              <Minus className="h-4 w-4" />
-            </Button>
-
-            {/* Pausa / Reanudar */}
-            <Button
-              variant="outline"
-              size="icon"
-              className={cn(
-                "h-9 w-9 rounded-lg",
-                paused
-                  ? "border-yellow-500/50 text-yellow-500"
-                  : "border-border",
-              )}
-              onClick={() => setPaused((p) => !p)}
-            >
-              {paused ? (
-                <Play className="h-4 w-4" />
-              ) : (
-                <Pause className="h-4 w-4" />
-              )}
-            </Button>
-
-            <Button
-              variant="outline"
-              size="icon"
-              className="h-9 w-9 rounded-lg border-border"
-              onClick={() => {
-                const next = duration + 30;
-                onChangeDuration(next);
-              }}
-            >
-              <Plus className="h-4 w-4" />
-            </Button>
-          </div>
-        )}
-
-        {/* Close Button */}
-        <Button
-          variant={finished ? "default" : "ghost"}
-          size="icon"
-          onClick={onClose}
+        <div
           className={cn(
-            "h-10 w-10 rounded-lg shrink-0",
+            "flex items-center justify-center gap-2 px-4 pb-4",
             finished
-              ? "bg-green-500 hover:bg-green-600 text-white"
-              : "text-muted-foreground hover:text-foreground",
+              ? "bg-green-500/15"
+              : paused
+                ? "bg-yellow-500/10"
+                : "bg-card",
           )}
         >
           {finished ? (
-            <span className="font-semibold text-sm">OK</span>
+            <Button
+              onClick={onClose}
+              className="w-full bg-green-500 hover:bg-green-600 text-white font-bold rounded-xl h-10"
+            >
+              ¡Siguiente serie!
+            </Button>
           ) : (
-            <X className="h-5 w-5" />
-          )}
-        </Button>
-      </div>
+            <>
+              <Button
+                variant="outline"
+                size="sm"
+                aria-label="Restar 30 segundos"
+                className="flex-1 h-9 text-xs font-semibold rounded-xl"
+                onClick={() => onChangeDuration(Math.max(30, duration - 30))}
+              >
+                <Minus className="h-3 w-3 mr-1" aria-hidden="true" />
+                30s
+              </Button>
 
-      {/* Floating Indicator */}
-      <div
-        className={cn(
-          "absolute -top-3 left-1/2 -translate-x-1/2 flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold rounded-full shadow-lg",
-          finished
-            ? "bg-green-500 text-white animate-bounce"
-            : paused
-              ? "bg-yellow-500 text-white"
-              : "bg-primary text-primary-foreground animate-bounce",
-        )}
-      >
-        <Timer className="h-3.5 w-3.5" />
-        <span>{finished ? "¡DESCANSASTE!" : paused ? "EN PAUSA" : "DESCANSO"}</span>
+              <Button
+                variant="outline"
+                size="icon"
+                aria-label={
+                  paused ? "Reanudar temporizador" : "Pausar temporizador"
+                }
+                className={cn(
+                  "h-9 w-9 rounded-xl shrink-0",
+                  paused
+                    ? "border-yellow-500/50 text-yellow-500 bg-yellow-500/10"
+                    : "",
+                )}
+                onClick={() => setPaused((p) => !p)}
+              >
+                {paused ? (
+                  <Play className="h-4 w-4" aria-hidden="true" />
+                ) : (
+                  <Pause className="h-4 w-4" aria-hidden="true" />
+                )}
+              </Button>
+
+              <Button
+                variant="outline"
+                size="sm"
+                aria-label="Sumar 30 segundos"
+                className="flex-1 h-9 text-xs font-semibold rounded-xl"
+                onClick={() => onChangeDuration(duration + 30)}
+              >
+                <Plus className="h-3 w-3 mr-1" aria-hidden="true" />
+                30s
+              </Button>
+            </>
+          )}
+        </div>
       </div>
     </div>
   );

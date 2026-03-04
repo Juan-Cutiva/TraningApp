@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import { useLiveQuery } from "dexie-react-hooks";
 import { db, calculate1RM } from "@/lib/db";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -49,6 +49,7 @@ import {
   Tooltip,
   ResponsiveContainer,
 } from "recharts";
+import { ErrorBoundary } from "@/components/error-boundary";
 
 export function HistoryContent() {
   const [currentMonth, setCurrentMonth] = useState(new Date());
@@ -88,38 +89,36 @@ export function HistoryContent() {
     setSheetOpen(true);
   }
 
-  const exerciseChartData = selectedExercise
-    ? (allLogs
-        ?.filter((l) =>
-          l.exercises.some((e) => e.exerciseName === selectedExercise),
-        )
-        .reverse()
-        .map((l) => {
-          const ex = l.exercises.find(
-            (e) => e.exerciseName === selectedExercise,
-          );
-          const completedSets = ex?.sets.filter((s) => s.completed) ?? [];
-          const maxWeight =
-            completedSets.length > 0
-              ? Math.max(...completedSets.map((s) => s.weight))
-              : 0;
-          const bestSet =
-            completedSets.length > 0
-              ? completedSets.reduce(
-                  (best, s) => (s.weight > best.weight ? s : best),
-                  completedSets[0],
-                )
-              : null;
-          const bestWeight = bestSet?.weight ?? 0;
-          const bestReps = bestSet?.reps ?? 0;
-          const rm = calculate1RM(bestWeight, bestReps);
-          return {
-            date: format(new Date(l.date), "dd/MM"),
-            peso: maxWeight,
-            "1RM": rm.epley,
-          };
-        }) ?? [])
-    : [];
+  const exerciseChartData = useMemo(() => {
+    if (!selectedExercise || !allLogs) return [];
+    return allLogs
+      .filter((l) => l.exercises.some((e) => e.exerciseName === selectedExercise))
+      .slice()
+      .reverse()
+      .map((l) => {
+        const ex = l.exercises.find((e) => e.exerciseName === selectedExercise);
+        const completedSets = ex?.sets.filter((s) => s.completed) ?? [];
+        const maxWeight =
+          completedSets.length > 0
+            ? Math.max(...completedSets.map((s) => Number(s.weight) || 0))
+            : 0;
+        const bestSet =
+          completedSets.length > 0
+            ? completedSets.reduce(
+                (best, s) => (Number(s.weight) > Number(best.weight) ? s : best),
+                completedSets[0],
+              )
+            : null;
+        const bestWeight = Number(bestSet?.weight) || 0;
+        const bestReps = bestSet?.reps ?? 0;
+        const rm = calculate1RM(bestWeight, bestReps);
+        return {
+          date: format(new Date(l.date), "dd/MM"),
+          peso: maxWeight,
+          "1RM": rm.epley,
+        };
+      });
+  }, [allLogs, selectedExercise]);
 
   return (
     <div className="mx-auto max-w-lg px-4 pt-6">
@@ -140,19 +139,25 @@ export function HistoryContent() {
             <Button
               variant="ghost"
               size="icon"
+              aria-label="Mes anterior"
               onClick={() => setCurrentMonth(subMonths(currentMonth, 1))}
             >
-              <ChevronLeft className="h-5 w-5" />
+              <ChevronLeft className="h-5 w-5" aria-hidden="true" />
             </Button>
-            <span className="font-semibold text-foreground capitalize">
+            <span
+              aria-live="polite"
+              aria-atomic="true"
+              className="font-semibold text-foreground capitalize"
+            >
               {format(currentMonth, "MMMM yyyy", { locale: es })}
             </span>
             <Button
               variant="ghost"
               size="icon"
+              aria-label="Mes siguiente"
               onClick={() => setCurrentMonth(addMonths(currentMonth, 1))}
             >
-              <ChevronRight className="h-5 w-5" />
+              <ChevronRight className="h-5 w-5" aria-hidden="true" />
             </Button>
           </div>
 
@@ -176,7 +181,9 @@ export function HistoryContent() {
               return (
                 <button
                   key={i}
+                  type="button"
                   onClick={() => handleDayClick(day)}
+                  aria-label={`${format(day, "EEEE dd 'de' MMMM", { locale: es })}${hasWorkout && isCurrentMonth ? ", entrenamiento registrado" : ""}${isSelected ? ", seleccionado" : ""}`}
                   className={`relative flex h-10 items-center justify-center rounded-lg text-sm transition-colors
                     ${!isCurrentMonth ? "text-muted-foreground/30" : "text-foreground"}
                     ${isToday && !isSelected ? "bg-primary/15 font-bold text-primary" : ""}
@@ -184,12 +191,12 @@ export function HistoryContent() {
                     ${isCurrentMonth && !isSelected ? "hover:bg-muted active:bg-muted/70" : ""}
                   `}
                 >
-                  {format(day, "d")}
+                  <span aria-hidden="true">{format(day, "d")}</span>
                   {hasWorkout && isCurrentMonth && !isSelected && (
-                    <span className="absolute bottom-1 h-1.5 w-1.5 rounded-full bg-primary" />
+                    <span className="absolute bottom-1 h-1.5 w-1.5 rounded-full bg-primary" aria-hidden="true" />
                   )}
                   {hasWorkout && isCurrentMonth && isSelected && (
-                    <span className="absolute bottom-1 h-1.5 w-1.5 rounded-full bg-primary-foreground" />
+                    <span className="absolute bottom-1 h-1.5 w-1.5 rounded-full bg-primary-foreground" aria-hidden="true" />
                   )}
                 </button>
               );
@@ -248,7 +255,12 @@ export function HistoryContent() {
               {allLogs?.slice(0, 10).map((log) => (
                 <Card
                   key={log.id}
-                  className="cursor-pointer hover:bg-muted/50 transition-all active:scale-[0.99] border-border/60"
+                  className="border-border/60"
+                >
+                <button
+                  type="button"
+                  className="w-full cursor-pointer hover:bg-muted/50 transition-all active:scale-[0.99] rounded-[inherit] text-left"
+                  aria-label={`Ver detalles de ${log.routineName}, ${format(new Date(log.date), "EEEE dd MMM", { locale: es })}`}
                   onClick={() => {
                     setSelectedDate(new Date(log.date));
                     setSheetOpen(true);
@@ -257,7 +269,7 @@ export function HistoryContent() {
                   <CardContent className="flex items-center justify-between p-4">
                     <div className="flex items-center gap-3">
                       <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-primary/10">
-                        <Dumbbell className="h-5 w-5 text-primary" />
+                        <Dumbbell className="h-5 w-5 text-primary" aria-hidden="true" />
                       </div>
                       <div>
                         <p className="font-semibold text-foreground">
@@ -277,6 +289,7 @@ export function HistoryContent() {
                       <p className="text-xs text-muted-foreground">duración</p>
                     </div>
                   </CardContent>
+                </button>
                 </Card>
               ))}
             </div>
@@ -311,6 +324,7 @@ export function HistoryContent() {
                   </CardTitle>
                 </CardHeader>
                 <CardContent className="p-4 pt-2">
+                  <ErrorBoundary>
                   <ResponsiveContainer width="100%" height={220}>
                     <LineChart data={exerciseChartData}>
                       <CartesianGrid
@@ -357,6 +371,7 @@ export function HistoryContent() {
                       />
                     </LineChart>
                   </ResponsiveContainer>
+                  </ErrorBoundary>
                 </CardContent>
               </Card>
 
@@ -385,7 +400,7 @@ export function HistoryContent() {
                 <p className="text-lg font-medium text-foreground">
                   Selecciona un ejercicio
                 </p>
-                <p className="text-sm text-muted-foreground mt-2 max-w-[250px]">
+                <p className="text-sm text-muted-foreground mt-2 max-w-62.5">
                   Elige un ejercicio para ver tu historial de peso y progreso
                   estimado de 1RM
                 </p>

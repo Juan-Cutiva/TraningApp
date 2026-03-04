@@ -447,3 +447,36 @@ export async function checkAndUpdatePRs(
 
   return newPRs;
 }
+
+/**
+ * Estimates total workout duration in seconds.
+ * Formula: per exercise = sets × execTimePerSet + (sets-1) × restSeconds
+ * + 60s transition between exercises.
+ * Supersets run in parallel (only counted once per group).
+ */
+export function estimateRoutineDuration(routine: Routine): number {
+  let totalSeconds = 0;
+  const seenSupersets = new Set<string>();
+
+  for (const ex of routine.exercises) {
+    // Skip repeated superset members — count the whole group once
+    if (ex.supersetId) {
+      if (seenSupersets.has(ex.supersetId)) continue;
+      seenSupersets.add(ex.supersetId);
+    }
+
+    const repsStr = ex.reps.toString();
+    const repsNum = parseInt(repsStr.match(/\d+/)?.[0] ?? "10", 10);
+
+    // Approximate time to execute one set (seconds)
+    const execPerSet =
+      repsNum <= 5 ? 25 : repsNum <= 10 ? 35 : repsNum <= 15 ? 50 : 70;
+
+    const rest = ex.restSeconds ?? 150;
+
+    // sets × exec + (sets-1) × rest + 60s transition
+    totalSeconds += ex.sets * execPerSet + (ex.sets - 1) * rest + 60;
+  }
+
+  return totalSeconds;
+}

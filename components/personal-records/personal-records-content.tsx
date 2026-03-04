@@ -72,7 +72,7 @@ export function PersonalRecordsContent() {
             <p className="text-lg font-medium text-foreground">
               Sin records aún
             </p>
-            <p className="text-sm text-muted-foreground mt-2 max-w-[280px]">
+            <p className="text-sm text-muted-foreground mt-2 max-w-70">
               Completa tus primeros entrenamientos para empezar a establecer tus
               récords personales
             </p>

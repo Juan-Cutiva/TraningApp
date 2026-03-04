@@ -1,7 +1,8 @@
 "use client";
 
+import { useState, useEffect } from "react";
 import { useLiveQuery } from "dexie-react-hooks";
-import { db, getTodayRoutine } from "@/lib/db";
+import { db, getTodayRoutine, estimateRoutineDuration, type Routine } from "@/lib/db";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
@@ -17,10 +18,30 @@ import {
   TrendingDown,
   Target,
   Plus,
+  Play,
+  AlertTriangle,
+  Trash2,
+  Timer,
 } from "lucide-react";
 import { startOfWeek, endOfWeek, isWithinInterval, format } from "date-fns";
 import { es } from "date-fns/locale";
 import { MuscleActivity } from "./muscle-activity";
+
+interface ActiveSession {
+  routineId: number;
+  routineName: string;
+  elapsed: number;
+  completedSets: number;
+  totalSets: number;
+}
+
+function fmtTime(seconds: number) {
+  const h = Math.floor(seconds / 3600);
+  const m = Math.floor((seconds % 3600) / 60);
+  const s = seconds % 60;
+  if (h > 0) return `${h}:${m.toString().padStart(2, "0")}:${s.toString().padStart(2, "0")}`;
+  return `${m.toString().padStart(2, "0")}:${s.toString().padStart(2, "0")}`;
+}
 
 export function DashboardContent() {
   const todayRoutine = useLiveQuery(() => getTodayRoutine());
@@ -29,6 +50,44 @@ export function DashboardContent() {
   );
   const routines = useLiveQuery(() => db.routines.toArray());
   const personalRecords = useLiveQuery(() => db.personalRecords.toArray());
+
+  // Active workout sessions stored in localStorage
+  const [activeSessions, setActiveSessions] = useState<ActiveSession[]>([]);
+
+  useEffect(() => {
+    if (typeof window === "undefined" || !routines) return;
+    const found: ActiveSession[] = [];
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i);
+      if (key?.startsWith("workout_active_")) {
+        try {
+          const session = JSON.parse(localStorage.getItem(key)!);
+          const routine = routines.find((r) => r.id === session.routineId);
+          found.push({
+            routineId: session.routineId,
+            routineName: routine?.name ?? "Entrenamiento",
+            elapsed: session.elapsed ?? 0,
+            completedSets:
+              // eslint-disable-next-line @typescript-eslint/no-explicit-any
+              session.exerciseLogs?.reduce((acc: number, ex: any) =>
+                acc + ex.sets.filter((s: any) => s.completed).length, 0) ?? 0,
+            totalSets:
+              // eslint-disable-next-line @typescript-eslint/no-explicit-any
+              session.exerciseLogs?.reduce((acc: number, ex: any) =>
+                acc + ex.sets.length, 0) ?? 0,
+          });
+        } catch {
+          // malformed session — ignore
+        }
+      }
+    }
+    setActiveSessions(found);
+  }, [routines]);
+
+  function discardSession(routineId: number) {
+    localStorage.removeItem(`workout_active_${routineId}`);
+    setActiveSessions((prev) => prev.filter((s) => s.routineId !== routineId));
+  }
 
   // Body weight data
   const weightLogs = useLiveQuery(() =>
@@ -92,8 +151,55 @@ export function DashboardContent() {
         </h1>
       </div>
 
+      {/* Active workout sessions banner */}
+      {activeSessions.map((session) => (
+        <Card
+          key={session.routineId}
+          className="mb-4 border-warning/40 bg-warning/10"
+        >
+          <CardContent className="p-4">
+            <div className="flex items-start justify-between gap-3">
+              <div className="flex items-center gap-3 flex-1 min-w-0">
+                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-warning/20">
+                  <AlertTriangle className="h-5 w-5 text-warning-foreground" />
+                </div>
+                <div className="min-w-0">
+                  <p className="text-xs font-bold text-warning-foreground uppercase tracking-wide">
+                    Entrenamiento en curso
+                  </p>
+                  <p className="font-semibold text-foreground truncate">
+                    {session.routineName}
+                  </p>
+                  <p className="text-xs text-muted-foreground">
+                    {session.completedSets}/{session.totalSets} series •{" "}
+                    {fmtTime(session.elapsed)}
+                  </p>
+                </div>
+              </div>
+              <div className="flex gap-2 shrink-0">
+                <Link href={`/workout/${session.routineId}`}>
+                  <Button size="sm" className="gap-1 h-8">
+                    <Play className="h-3 w-3" />
+                    Retomar
+                  </Button>
+                </Link>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="h-8 w-8 text-destructive hover:text-destructive"
+                  onClick={() => discardSession(session.routineId)}
+                  title="Descartar sesión"
+                >
+                  <Trash2 className="h-4 w-4" />
+                </Button>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+      ))}
+
       {/* Today's Routine CTA */}
-      <Card className="mb-5 border-primary/20 bg-gradient-to-br from-primary/10 to-primary/5">
+      <Card className="mb-5 border-primary/20 bg-linear-to-br from-primary/10 to-primary/5">
         <CardContent className="p-5">
           {todayRoutine ? (
             <div className="flex items-center justify-between">
@@ -105,7 +211,8 @@ export function DashboardContent() {
                   {todayRoutine.name}
                 </p>
                 <p className="text-sm text-muted-foreground mt-1">
-                  {todayRoutine.exercises.length} ejercicios
+                  {todayRoutine.exercises.length} ejercicios •{" "}
+                  ~{Math.round(estimateRoutineDuration(todayRoutine) / 60)} min
                 </p>
               </div>
               <Link href={`/workout/${todayRoutine.id}`}>
@@ -175,7 +282,7 @@ export function DashboardContent() {
 
       {/* Weight & Goal Card */}
       {latestWeight ? (
-        <Card className="mb-4 bg-gradient-to-br from-chart-4/10 to-chart-4/5 border-chart-4/30">
+        <Card className="mb-4 bg-linear-to-br from-chart-4/10 to-chart-4/5 border-chart-4/30">
           <CardContent className="p-5">
             <div className="flex items-center justify-between mb-3">
               <div className="flex items-center gap-2">
@@ -252,7 +359,7 @@ export function DashboardContent() {
           </CardContent>
         </Card>
       ) : (
-        <Card className="mb-4 bg-gradient-to-br from-chart-4/10 to-chart-4/5 border-chart-4/30">
+        <Card className="mb-4 bg-linear-to-br from-chart-4/10 to-chart-4/5 border-chart-4/30">
           <CardContent className="p-5">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2">

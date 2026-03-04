@@ -174,7 +174,7 @@ export function PlateCalculator({
 
           {/* Bar Weight */}
           <div className="flex items-center gap-2">
-            <label className="text-sm font-medium flex-shrink-0">Barra:</label>
+            <label className="text-sm font-medium shrink-0">Barra:</label>
             <div className="flex items-center gap-1 flex-1">
               <Input
                 type="text"
@@ -189,7 +189,7 @@ export function PlateCalculator({
 
           {/* Target Weight */}
           <div className="flex items-center gap-2">
-            <label className="text-sm font-medium flex-shrink-0">
+            <label className="text-sm font-medium shrink-0">
               Peso objetivo:
             </label>
             <div className="flex items-center gap-1 flex-1">
@@ -237,19 +237,19 @@ export function PlateCalculator({
 
                     {/* Left collar */}
                     <div
-                      className="h-6 bg-gradient-to-r from-slate-500 to-slate-400 rounded-sm"
+                      className="h-6 bg-linear-to-r from-slate-500 to-slate-400 rounded-sm"
                       style={{ width: "6px" }}
                     />
 
                     {/* Bar */}
                     <div
-                      className="h-3 bg-gradient-to-r from-slate-400 via-slate-300 to-slate-400 rounded-full"
+                      className="h-3 bg-linear-to-r from-slate-400 via-slate-300 to-slate-400 rounded-full"
                       style={{ width: "50px" }}
                     />
 
                     {/* Center collar */}
                     <div
-                      className="h-6 bg-gradient-to-r from-slate-500 to-slate-400 rounded-sm"
+                      className="h-6 bg-linear-to-r from-slate-500 to-slate-400 rounded-sm"
                       style={{ width: "6px" }}
                     />
 
