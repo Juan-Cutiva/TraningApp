@@ -33,6 +33,7 @@ export interface WorkoutLog {
   duration: number; // seconds
   completed: boolean;
   exercises: WorkoutExerciseLog[];
+  notes?: string;
 }
 
 export interface WorkoutExerciseLog {
@@ -81,6 +82,7 @@ export interface UserSettings {
   defaultRestSeconds: number;
   theme: "light" | "dark" | "system";
   bodyWeight: number | null;
+  height?: number | null; // height in cm for BMI
   defaultUnit: string;
   // Music widget settings
   musicService: "spotify" | "youtube" | null;
@@ -104,6 +106,13 @@ export interface WeightGoal {
   createdAt: Date;
 }
 
+export interface AppUser {
+  id?: number;
+  email: string;
+  passwordHash: string; // SHA-256 hex digest
+  createdAt: Date;
+}
+
 // --- Database ---
 
 class GymDB extends Dexie {
@@ -114,6 +123,7 @@ class GymDB extends Dexie {
   userSettings!: EntityTable<UserSettings, "id">;
   bodyWeight!: EntityTable<BodyWeightEntry, "id">;
   weightGoals!: EntityTable<WeightGoal, "id">;
+  users!: EntityTable<AppUser, "id">;
 
   constructor() {
     super("GymTrackerDB");
@@ -125,6 +135,16 @@ class GymDB extends Dexie {
       userSettings: "++id",
       bodyWeight: "++id, date",
       weightGoals: "++id, createdAt",
+    });
+    this.version(3).stores({
+      routines: "++id, name, dayOfWeek",
+      workoutLogs: "++id, routineId, date, completed",
+      personalRecords: "++id, exerciseName, type, date",
+      goals: "++id, type, completed",
+      userSettings: "++id",
+      bodyWeight: "++id, date",
+      weightGoals: "++id, createdAt",
+      users: "++id, &email",
     });
   }
 }
@@ -290,7 +310,8 @@ export function calculate1RM(
 
   // 2. Brzycki (1996) - Muy precisa para 6-10 repeticiones
   // Precisión: ±3% cuando las reps son entre 1-10
-  const brzycki = weight * (36 / (37 - repsNum));
+  // Cap at 36 to avoid divide-by-zero (denominator 37-reps would be 0 at reps=37)
+  const brzycki = weight * (36 / (37 - Math.min(repsNum, 36)));
 
   // 3. Lombardi (2010) - Alternativa moderna
   const lombardi = weight * Math.pow(repsNum, 0.1);

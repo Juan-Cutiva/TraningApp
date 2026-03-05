@@ -22,9 +22,6 @@ export function MusicWidget({ compact = false }: MusicWidgetProps) {
   const [isMinimized, setIsMinimized] = useState(compact);
   const [isVisible, setIsVisible] = useState(true);
 
-  // Debug: log settings to console
-  console.log("🎵 MusicWidget settings:", settings);
-
   // Wait for settings to load
   if (settings === undefined) {
     return (
@@ -47,11 +44,6 @@ export function MusicWidget({ compact = false }: MusicWidgetProps) {
     !settings?.musicService ||
     !settings?.musicEmbedUrl
   ) {
-    console.log("🎵 MusicWidget disabled:", {
-      showMusicWidget: settings?.showMusicWidget,
-      musicService: settings?.musicService,
-      musicEmbedUrl: settings?.musicEmbedUrl,
-    });
     return null;
   }
 
@@ -107,12 +99,7 @@ export function MusicWidget({ compact = false }: MusicWidgetProps) {
 
   const embedUrl = getEmbedUrl();
 
-  // Debug: show widget even without valid embed URL to test
-  console.log("🎵 MusicWidget embedUrl:", embedUrl);
-
   if (!embedUrl) {
-    // For debugging, show the widget anyway with a placeholder
-    console.log("⚠️ No embed URL, showing placeholder");
     return (
       <div className="fixed bottom-20 right-4 z-40">
         <Button

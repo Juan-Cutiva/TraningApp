@@ -3,6 +3,8 @@ import { Inter, Space_Grotesk } from "next/font/google";
 import { ThemeProvider } from "@/components/theme-provider";
 import { AppShell } from "@/components/app-shell";
 import { SpotifyProvider } from "@/components/spotify/spotify-context";
+import { Toaster } from "@/components/ui/sonner";
+import { AuthProvider } from "@/components/auth/auth-provider";
 import "./globals.css";
 
 const inter = Inter({ subsets: ["latin"], variable: "--font-inter" });
@@ -24,8 +26,8 @@ export const viewport: Viewport = {
 
 export const metadata: Metadata = {
   title: {
-    default: "Juan Traning - Entrenamiento Personal",
-    template: "%s | Juan Traning",
+    default: "Cuti Traning - Entrenamiento Personal",
+    template: "%s | Cuti Traning",
   },
   description:
     "Tu entrenador personal avanzado. Registra entrenamientos, analiza progreso y alcanza tus objetivos. 100% offline.",
@@ -45,23 +47,23 @@ export const metadata: Metadata = {
     follow: false,
   },
   openGraph: {
-    title: "Juan Traning - Entrenamiento Personal",
+    title: "Cuti Traning - Entrenamiento Personal",
     description:
       "Tu entrenador personal avanzado. Registra entrenamientos, analiza progreso y alcanza tus objetivos. 100% offline.",
     type: "website",
     locale: "es_ES",
-    siteName: "Juan Traning",
+    siteName: "Cuti Traning",
   },
   twitter: {
     card: "summary",
-    title: "Juan Traning - Entrenamiento Personal",
+    title: "Cuti Traning - Entrenamiento Personal",
     description:
       "Tu entrenador personal avanzado. Registra entrenamientos, analiza progreso y alcanza tus objetivos. 100% offline.",
   },
   appleWebApp: {
     capable: true,
     statusBarStyle: "black-translucent",
-    title: "Juan Traning",
+    title: "Cuti Traning",
   },
   icons: {
     icon: [
@@ -83,9 +85,12 @@ export default function RootLayout({
         className={`${inter.variable} ${spaceGrotesk.variable} font-sans antialiased`}
       >
         <ThemeProvider attribute="class" defaultTheme="dark" enableSystem>
-          <SpotifyProvider>
-            <AppShell>{children}</AppShell>
-          </SpotifyProvider>
+          <AuthProvider>
+            <SpotifyProvider>
+              <AppShell>{children}</AppShell>
+            </SpotifyProvider>
+          </AuthProvider>
+          <Toaster position="top-center" richColors />
         </ThemeProvider>
       </body>
     </html>

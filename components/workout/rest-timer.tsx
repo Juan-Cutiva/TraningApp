@@ -75,6 +75,8 @@ export function RestTimer({
   const prevDurationRef = useRef(duration);
   // Ref para que el interval acceda a paused sin stale closure
   const pausedRef = useRef(false);
+  // Flag para que el useEffect de delta ignore el próximo cambio (reset por preset)
+  const skipDeltaRef = useRef(false);
 
   const cleanup = useCallback(() => {
     if (intervalRef.current) {
@@ -106,9 +108,14 @@ export function RestTimer({
   }, [cleanup]);
 
   // Sincronizar remaining cuando el usuario ajusta duration con +/-
+  // Si skipDeltaRef está activo (preset), se omite el delta y se respeta el remaining ya seteado
   useEffect(() => {
     const delta = duration - prevDurationRef.current;
     prevDurationRef.current = duration;
+    if (skipDeltaRef.current) {
+      skipDeltaRef.current = false;
+      return;
+    }
     if (delta !== 0 && !finished) {
       setRemaining((prev) => Math.max(0, prev + delta));
     }
@@ -122,6 +129,18 @@ export function RestTimer({
     }
   }, [finished]);
 
+  // Reset completo al presionar un preset — reinicia desde el tiempo elegido
+  function handlePresetClick(presetSeconds: number) {
+    skipDeltaRef.current = true;
+    prevDurationRef.current = presetSeconds;
+    setRemaining(presetSeconds);
+    setFinished(false);
+    hasPlayedSound.current = false;
+    setPaused(false);
+    pausedRef.current = false;
+    onChangeDuration(presetSeconds);
+  }
+
   const minutes = Math.floor(remaining / 60);
   const seconds = remaining % 60;
   const progress =
@@ -133,11 +152,11 @@ export function RestTimer({
       {/* Floating badge */}
       <div
         className={cn(
-          "absolute -top-3 left-1/2 -translate-x-1/2 flex items-center gap-1 px-3 py-1 text-[10px] font-bold rounded-full shadow-lg whitespace-nowrap",
+          "absolute -top-3 left-1/2 -translate-x-1/2 flex items-center gap-1 px-3 py-1 text-[10px] font-bold rounded-full shadow-lg whitespace-nowrap z-100",
           finished
             ? "bg-green-500 text-white animate-bounce"
             : paused
-              ? "bg-yellow-500 text-white"
+              ? "bg-yellow-500 text-yellow-950"
               : "bg-primary text-primary-foreground animate-bounce",
         )}
       >
@@ -239,6 +258,36 @@ export function RestTimer({
           </div>
         )}
 
+        {/* Preset buttons */}
+        {!finished && (
+          <div
+            className={cn(
+              "flex items-center justify-center gap-1 px-4 pb-2",
+              paused ? "bg-yellow-500/10" : "bg-card",
+            )}
+          >
+            {[
+              { label: "1m", seconds: 60 },
+              { label: "1:30", seconds: 90 },
+              { label: "2m", seconds: 120 },
+              { label: "3m", seconds: 180 },
+              { label: "5m", seconds: 300 },
+            ].map(({ label, seconds }) => (
+              <Button
+                key={seconds}
+                type="button"
+                variant={duration === seconds ? "default" : "ghost"}
+                size="sm"
+                aria-label={`Establecer descanso a ${label}`}
+                className="flex-1 h-7 text-[10px] font-semibold rounded-lg px-0"
+                onClick={() => handlePresetClick(seconds)}
+              >
+                {label}
+              </Button>
+            ))}
+          </div>
+        )}
+
         {/* Controls */}
         <div
           className={cn(
@@ -304,6 +353,15 @@ export function RestTimer({
             </>
           )}
         </div>
+      </div>
+
+      {/* Accessibility: live region for screen readers */}
+      <div aria-live="assertive" aria-atomic="true" className="sr-only">
+        {finished
+          ? "Descanso terminado. ¡Listo para el siguiente ejercicio!"
+          : paused
+            ? "Temporizador en pausa"
+            : `${minutes}:${seconds.toString().padStart(2, "0")} restantes`}
       </div>
     </div>
   );

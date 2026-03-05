@@ -4,7 +4,7 @@ import { useLiveQuery } from "dexie-react-hooks";
 import { db } from "@/lib/db";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Trash2, Trophy, Dumbbell, TrendingUp, Loader2 } from "lucide-react";
+import { Trash2, Trophy, Dumbbell, TrendingUp, Loader2, Zap } from "lucide-react";
 import { format } from "date-fns";
 import { es } from "date-fns/locale";
 import { useState } from "react";
@@ -84,6 +84,7 @@ export function PersonalRecordsContent() {
             const prs = prsByExercise![exerciseName];
             const weightPR = prs.find((p) => p.type === "weight");
             const repsPR = prs.find((p) => p.type === "reps");
+            const rmPR = prs.find((p) => p.type === "1rm");
 
             return (
               <Card key={exerciseName}>
@@ -94,31 +95,26 @@ export function PersonalRecordsContent() {
                 </CardHeader>
                 <CardContent className="p-4 pt-0 flex flex-col gap-2">
                   {weightPR && (
-                    <div className="flex items-center justify-between p-3 bg-primary/5 rounded-lg group">
+                    <div className="flex items-center justify-between p-3 bg-primary/5 rounded-lg">
                       <div className="flex items-center gap-3">
                         <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-primary/15">
                           <Dumbbell className="h-5 w-5 text-primary" />
                         </div>
                         <div>
-                          <p className="text-sm font-medium text-foreground">
-                            Mayor Peso
-                          </p>
+                          <p className="text-sm font-medium text-foreground">Mayor Peso</p>
                           <p className="text-xs text-muted-foreground">
-                            {format(new Date(weightPR.date), "dd MMM yyyy", {
-                              locale: es,
-                            })}
+                            {format(new Date(weightPR.date), "dd MMM yyyy", { locale: es })}
                           </p>
                         </div>
                       </div>
                       <div className="flex items-center gap-2">
-                        <span className="text-lg font-bold text-primary">
-                          {weightPR.details}
-                        </span>
+                        <span className="text-lg font-bold text-primary">{weightPR.details}</span>
                         <Button
                           variant="ghost"
                           size="icon"
                           onClick={() => openDeleteDialog(weightPR.id!)}
-                          className="h-8 w-8 opacity-0 group-hover:opacity-100 transition-opacity text-destructive hover:text-destructive"
+                          aria-label="Eliminar record de peso"
+                          className="h-8 w-8 text-muted-foreground/40 hover:text-destructive"
                         >
                           <Trash2 className="h-4 w-4" />
                         </Button>
@@ -127,31 +123,54 @@ export function PersonalRecordsContent() {
                   )}
 
                   {repsPR && (
-                    <div className="flex items-center justify-between p-3 bg-chart-3/5 rounded-lg group">
+                    <div className="flex items-center justify-between p-3 bg-chart-3/5 rounded-lg">
                       <div className="flex items-center gap-3">
                         <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-chart-3/15">
                           <TrendingUp className="h-5 w-5 text-chart-3" />
                         </div>
                         <div>
-                          <p className="text-sm font-medium text-foreground">
-                            Mayor Reps
-                          </p>
+                          <p className="text-sm font-medium text-foreground">Mayor Reps</p>
                           <p className="text-xs text-muted-foreground">
-                            {format(new Date(repsPR.date), "dd MMM yyyy", {
-                              locale: es,
-                            })}
+                            {format(new Date(repsPR.date), "dd MMM yyyy", { locale: es })}
                           </p>
                         </div>
                       </div>
                       <div className="flex items-center gap-2">
-                        <span className="text-lg font-bold text-chart-3">
-                          {repsPR.details}
-                        </span>
+                        <span className="text-lg font-bold text-chart-3">{repsPR.details}</span>
                         <Button
                           variant="ghost"
                           size="icon"
                           onClick={() => openDeleteDialog(repsPR.id!)}
-                          className="h-8 w-8 opacity-0 group-hover:opacity-100 transition-opacity text-destructive hover:text-destructive"
+                          aria-label="Eliminar record de repeticiones"
+                          className="h-8 w-8 text-muted-foreground/40 hover:text-destructive"
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </Button>
+                      </div>
+                    </div>
+                  )}
+
+                  {rmPR && (
+                    <div className="flex items-center justify-between p-3 bg-amber-500/5 rounded-lg">
+                      <div className="flex items-center gap-3">
+                        <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-amber-500/15">
+                          <Zap className="h-5 w-5 text-amber-500" />
+                        </div>
+                        <div>
+                          <p className="text-sm font-medium text-foreground">1RM Est.</p>
+                          <p className="text-xs text-muted-foreground">
+                            {format(new Date(rmPR.date), "dd MMM yyyy", { locale: es })}
+                          </p>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <span className="text-lg font-bold text-amber-500">{rmPR.details}</span>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          onClick={() => openDeleteDialog(rmPR.id!)}
+                          aria-label="Eliminar record de 1RM"
+                          className="h-8 w-8 text-muted-foreground/40 hover:text-destructive"
                         >
                           <Trash2 className="h-4 w-4" />
                         </Button>

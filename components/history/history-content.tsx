@@ -9,6 +9,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   Sheet,
   SheetContent,
+  SheetDescription,
   SheetHeader,
   SheetTitle,
 } from "@/components/ui/sheet";
@@ -39,6 +40,7 @@ import {
   Dumbbell,
   TrendingUp,
   CalendarOff,
+  FileDown,
 } from "lucide-react";
 import {
   LineChart,
@@ -120,9 +122,157 @@ export function HistoryContent() {
       });
   }, [allLogs, selectedExercise]);
 
+  async function exportPDF() {
+    if (!allLogs || allLogs.length === 0) return;
+    const { jsPDF } = await import("jspdf");
+    const doc = new jsPDF({ orientation: "portrait", unit: "mm", format: "a4" });
+
+    const pageW = 210;
+    const margin = 14;
+    const contentW = pageW - margin * 2;
+    let y = margin;
+
+    const COLOR_PRIMARY: [number, number, number] = [67, 97, 238];
+    const COLOR_DARK: [number, number, number] = [20, 20, 40];
+    const COLOR_GRAY: [number, number, number] = [100, 100, 120];
+    const COLOR_LIGHT: [number, number, number] = [240, 241, 248];
+    const COLOR_ROW_ALT: [number, number, number] = [248, 249, 255];
+
+    // ── Header ──────────────────────────────────────────────────────────────
+    doc.setFillColor(...COLOR_PRIMARY);
+    doc.rect(0, 0, pageW, 28, "F");
+    doc.setTextColor(255, 255, 255);
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(18);
+    doc.text("Cuti Traning", margin, 12);
+    doc.setFontSize(10);
+    doc.setFont("helvetica", "normal");
+    doc.text("Historial de Entrenamientos", margin, 19);
+    const exportDate = format(new Date(), "dd 'de' MMMM yyyy", { locale: es });
+    doc.text(`Exportado el ${exportDate}`, pageW - margin, 19, { align: "right" });
+    y = 36;
+
+    // ── Summary ──────────────────────────────────────────────────────────────
+    const totalDuration = allLogs.reduce((s, l) => s + l.duration, 0);
+    const totalSessions = allLogs.length;
+    const avgDuration = totalSessions > 0 ? totalDuration / totalSessions : 0;
+    const fmtMin = (s: number) => `${Math.round(s / 60)} min`;
+
+    doc.setFillColor(...COLOR_LIGHT);
+    doc.roundedRect(margin, y, contentW, 20, 3, 3, "F");
+    doc.setTextColor(...COLOR_DARK);
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(9);
+
+    const colW = contentW / 3;
+    [
+      ["Sesiones totales", String(totalSessions)],
+      ["Tiempo total", fmtMin(totalDuration)],
+      ["Promedio por sesión", fmtMin(avgDuration)],
+    ].forEach(([label, value], i) => {
+      const cx = margin + colW * i + colW / 2;
+      doc.setTextColor(...COLOR_GRAY);
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(7.5);
+      doc.text(label, cx, y + 7, { align: "center" });
+      doc.setTextColor(...COLOR_PRIMARY);
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(11);
+      doc.text(value, cx, y + 15, { align: "center" });
+    });
+    y += 28;
+
+    // ── Sessions ─────────────────────────────────────────────────────────────
+    const sorted = [...allLogs].sort(
+      (a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()
+    );
+
+    for (let idx = 0; idx < sorted.length; idx++) {
+      const log = sorted[idx];
+      const dateStr = format(new Date(log.date), "EEEE dd 'de' MMMM yyyy", { locale: es });
+      const completedExercises = log.exercises.filter((ex) =>
+        ex.sets.some((s) => s.completed)
+      );
+      const blockH = 14 + completedExercises.length * 7 + 6;
+
+      // Page break check
+      if (y + blockH > 282) {
+        doc.addPage();
+        y = margin;
+      }
+
+      // Session header bar
+      doc.setFillColor(...COLOR_PRIMARY);
+      doc.roundedRect(margin, y, contentW, 10, 2, 2, "F");
+      doc.setTextColor(255, 255, 255);
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(9);
+      doc.text(log.routineName, margin + 3, y + 6.5);
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(8);
+      doc.text(`${fmtMin(log.duration)}  ·  ${dateStr}`, pageW - margin - 3, y + 6.5, { align: "right" });
+      y += 11;
+
+      // Exercises
+      completedExercises.forEach((ex, ei) => {
+        const rowBg: [number, number, number] = ei % 2 === 0 ? COLOR_LIGHT : COLOR_ROW_ALT;
+        doc.setFillColor(...rowBg);
+        doc.rect(margin, y, contentW, 7, "F");
+
+        doc.setTextColor(...COLOR_DARK);
+        doc.setFont("helvetica", "bold");
+        doc.setFontSize(8);
+        doc.text(ex.exerciseName, margin + 3, y + 4.8);
+
+        const setsStr = ex.sets
+          .filter((s) => s.completed)
+          .map((s) => `${s.weight}${s.unit}×${s.reps}`)
+          .join("   ");
+        doc.setFont("helvetica", "normal");
+        doc.setTextColor(...COLOR_GRAY);
+        doc.setFontSize(7.5);
+        doc.text(setsStr, pageW - margin - 3, y + 4.8, { align: "right" });
+        y += 7;
+      });
+
+      if (log.notes) {
+        if (y + 8 > 282) { doc.addPage(); y = margin; }
+        doc.setFillColor(255, 248, 220);
+        doc.rect(margin, y, contentW, 7, "F");
+        doc.setTextColor(120, 100, 0);
+        doc.setFont("helvetica", "italic");
+        doc.setFontSize(7.5);
+        doc.text(`Nota: ${log.notes}`, margin + 3, y + 4.8);
+        y += 7;
+      }
+
+      y += 5; // gap between sessions
+    }
+
+    // ── Footer on last page ───────────────────────────────────────────────────
+    const pageCount = doc.getNumberOfPages();
+    for (let p = 1; p <= pageCount; p++) {
+      doc.setPage(p);
+      doc.setTextColor(...COLOR_GRAY);
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(7);
+      doc.text(`Página ${p} de ${pageCount}`, pageW / 2, 293, { align: "center" });
+    }
+
+    doc.save(`cuti-traning-historial-${format(new Date(), "yyyy-MM-dd")}.pdf`);
+  }
+
   return (
     <div className="mx-auto max-w-lg px-4 pt-6">
-      <h1 className="mb-6 text-2xl font-bold text-foreground">Historial</h1>
+      <div className="mb-6 flex items-center justify-between">
+        <h1 className="text-2xl font-bold text-foreground">Historial</h1>
+        {allLogs && allLogs.length > 0 && (
+          <Button variant="outline" size="sm" className="gap-2 h-9" onClick={exportPDF}>
+            <FileDown className="h-4 w-4" />
+            Exportar PDF
+          </Button>
+        )}
+      </div>
 
       <Tabs defaultValue="calendar">
         <TabsList className="w-full mb-4">
@@ -423,6 +573,9 @@ export function HistoryContent() {
                   })
                 : ""}
             </SheetTitle>
+            <SheetDescription className="sr-only">
+              Detalle del entrenamiento del día seleccionado
+            </SheetDescription>
           </SheetHeader>
 
           <div className="px-4 pb-8">

@@ -28,7 +28,6 @@ import {
   Sun,
   Monitor,
   Timer,
-  Weight,
   AlertTriangle,
   Check,
   Loader2,
@@ -42,12 +41,12 @@ import {
   Plus,
   Music2,
   Music,
-  Link,
+  LogOut,
 } from "lucide-react";
 
-import { Switch } from "@/components/ui/switch";
-
 import { BASE_ROUTINES } from "@/lib/base-routines";
+import { useAuth } from "@/components/auth/auth-provider";
+import { AdminUsersPanel } from "./admin-users-panel";
 
 const DEFAULT_SETTINGS = {
   defaultRestSeconds: 150,
@@ -60,6 +59,7 @@ const DEFAULT_SETTINGS = {
 };
 
 export function SettingsContent() {
+  const { logout, isAdmin } = useAuth();
   const { theme, setTheme } = useTheme();
   const [mounted, setMounted] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -67,20 +67,20 @@ export function SettingsContent() {
   const [importStatus, setImportStatus] = useState<string | null>(null);
   const [loadBaseStatus, setLoadBaseStatus] = useState<string | null>(null);
 
-  // Local state for body weight to allow empty values
-  const [bodyWeightInput, setBodyWeightInput] = useState<string>("");
+  // Local state for height
+  const [heightInput, setHeightInput] = useState<string>("");
 
   // Read-only query - NO writes allowed here
   const settings = useLiveQuery(() => db.userSettings.toCollection().first());
 
-  // Sync body weight input with settings
+  // Sync height with settings
   useEffect(() => {
-    if (settings?.bodyWeight !== null && settings?.bodyWeight !== undefined) {
-      setBodyWeightInput(String(settings.bodyWeight));
+    if (settings?.height !== null && settings?.height !== undefined) {
+      setHeightInput(String(settings.height));
     } else {
-      setBodyWeightInput("");
+      setHeightInput("");
     }
-  }, [settings?.bodyWeight]);
+  }, [settings?.height]);
 
   // Separate effect to seed default settings (write operation, outside liveQuery)
   useEffect(() => {
@@ -99,15 +99,14 @@ export function SettingsContent() {
     await db.userSettings.update(settings.id, { [field]: value });
   }
 
-  async function handleBodyWeightChange(value: string) {
-    setBodyWeightInput(value);
-    // Only save to DB if there's a valid number
+  async function handleHeightChange(value: string) {
+    setHeightInput(value);
     if (value === "") {
-      await updateSetting("bodyWeight", null);
+      await updateSetting("height", null);
     } else {
       const num = parseFloat(value);
-      if (!isNaN(num)) {
-        await updateSetting("bodyWeight", num);
+      if (!isNaN(num) && num > 0) {
+        await updateSetting("height", num);
       }
     }
   }
@@ -213,7 +212,7 @@ export function SettingsContent() {
       return;
     if (!confirm("¿Confirmar eliminación total de datos?")) return;
 
-    // Clear ALL tables in the database
+    // Clear all tables except users (preserve login credentials)
     await db.routines.clear();
     await db.workoutLogs.clear();
     await db.personalRecords.clear();
@@ -309,21 +308,24 @@ export function SettingsContent() {
           </div>
           <div>
             <Label
-              htmlFor="body-weight"
+              htmlFor="height"
               className="text-sm font-medium flex items-center gap-2"
             >
-              <Weight className="h-4 w-4 text-muted-foreground" />
-              Peso corporal (kg)
+              <TrendingUp className="h-4 w-4 text-muted-foreground" />
+              Altura (cm)
             </Label>
             <Input
-              id="body-weight"
+              id="height"
               type="text"
               inputMode="decimal"
-              value={bodyWeightInput}
-              onChange={(e) => handleBodyWeightChange(e.target.value)}
-              placeholder="Opcional"
+              value={heightInput}
+              onChange={(e) => handleHeightChange(e.target.value)}
+              placeholder="Ej: 175"
               className="mt-2 h-11"
             />
+            <p className="text-xs text-muted-foreground mt-1">
+              Se usa para calcular el IMC en Peso Corporal
+            </p>
           </div>
         </CardContent>
       </Card>
@@ -377,62 +379,14 @@ export function SettingsContent() {
           </div>
 
           {settings?.musicService && (
-            <>
-              <div>
-                <Label
-                  htmlFor="music-url"
-                  className="text-sm font-medium flex items-center gap-2"
-                >
-                  <Link
-                    className="h-4 w-4 text-muted-foreground"
-                    aria-hidden="true"
-                  />
-                  URL de Playlist Spotify
-                </Label>
-                <Input
-                  id="music-url"
-                  placeholder="https://open.spotify.com/playlist/..."
-                  value={settings?.musicEmbedUrl || ""}
-                  onChange={(e) =>
-                    updateSetting("musicEmbedUrl", e.target.value)
-                  }
-                  className="mt-2 h-11"
-                />
-                <p className="text-xs text-muted-foreground mt-1.5">
-                  Copia la URL de tu playlist, álbum o canción en Spotify
-                </p>
-              </div>
-
-              <div className="flex items-center justify-between">
-                <div>
-                  <Label htmlFor="show-widget" className="text-sm font-medium">
-                    Mostrar widget
-                  </Label>
-                  <p className="text-xs text-muted-foreground">
-                    Widget flotante durante el entrenamiento
-                  </p>
-                </div>
-                <Switch
-                  id="show-widget"
-                  checked={settings?.showMusicWidget || false}
-                  onCheckedChange={(checked) =>
-                    updateSetting("showMusicWidget", checked)
-                  }
-                />
-              </div>
-
-              {settings?.showMusicWidget && settings?.musicEmbedUrl && (
-                <div className="p-3 bg-primary/5 rounded-lg border border-primary/20">
-                  <p className="text-xs text-primary font-medium">
-                    ✅ Widget activado
-                  </p>
-                  <p className="text-xs text-muted-foreground mt-1">
-                    El widget de música aparecerá en la pantalla de
-                    entrenamiento
-                  </p>
-                </div>
-              )}
-            </>
+            <div className="p-3 bg-primary/5 rounded-lg border border-primary/20">
+              <p className="text-xs text-primary font-medium">
+                Spotify activado
+              </p>
+              <p className="text-xs text-muted-foreground mt-1">
+                El reproductor de Spotify aparecerá durante el entrenamiento. Conéctate desde el modo workout.
+              </p>
+            </div>
           )}
         </CardContent>
       </Card>
@@ -701,6 +655,9 @@ export function SettingsContent() {
         </CardContent>
       </Card>
 
+      {/* Admin Panel — only visible to admin */}
+      {isAdmin && <AdminUsersPanel />}
+
       {/* Danger Zone */}
       <Card className="mb-5 border-destructive/30 bg-destructive/5">
         <CardHeader className="p-5 pb-3">
@@ -709,8 +666,8 @@ export function SettingsContent() {
             Zona de Peligro
           </CardTitle>
         </CardHeader>
-        <CardContent className="p-5 pt-0">
-          <p className="text-sm text-muted-foreground mb-4">
+        <CardContent className="p-5 pt-0 space-y-3">
+          <p className="text-sm text-muted-foreground">
             Eliminar todos los datos es irreversible. Asegúrate de tener un
             backup.
           </p>
@@ -721,6 +678,14 @@ export function SettingsContent() {
           >
             <AlertTriangle className="mr-2 h-4 w-4" />
             Eliminar todos los datos
+          </Button>
+          <Button
+            variant="outline"
+            className="w-full h-12 rounded-lg font-medium border-destructive/40 text-destructive hover:bg-destructive/10"
+            onClick={logout}
+          >
+            <LogOut className="mr-2 h-4 w-4" />
+            Cerrar sesión
           </Button>
         </CardContent>
       </Card>
@@ -745,7 +710,7 @@ export function SettingsContent() {
                 </p>
                 <p className="text-muted-foreground text-xs mt-1">
                   Busca el icono de 📱 o ⬇️ en la barra de direcciones y
-                  selecciona "Instalar Juan Traning"
+                  selecciona "Instalar Cuti Traning"
                 </p>
               </div>
             </div>
@@ -785,7 +750,7 @@ export function SettingsContent() {
 
       {/* App Info */}
       <div className="text-center pt-4">
-        <p className="text-sm font-semibold text-foreground">Juan Traning</p>
+        <p className="text-sm font-semibold text-foreground">Cuti Traning</p>
         <p className="text-xs text-muted-foreground mt-1">Versión 0.3.0</p>
         <p className="text-xs text-muted-foreground mt-1">
           100% Offline • Tus datos en tu dispositivo

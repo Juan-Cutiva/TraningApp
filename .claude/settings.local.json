@@ -1,7 +1,10 @@
 {
   "permissions": {
     "allow": [
-      "Bash(wc -l \"/c/Users/USUARIO PC/Downloads/b_iW5hO7UK2sA-1771966977845\"/**/*.tsx \"/c/Users/USUARIO PC/Downloads/b_iW5hO7UK2sA-1771966977845\"/**/*.ts)"
+      "Bash(wc -l \"/c/Users/USUARIO PC/Downloads/b_iW5hO7UK2sA-1771966977845\"/**/*.tsx \"/c/Users/USUARIO PC/Downloads/b_iW5hO7UK2sA-1771966977845\"/**/*.ts)",
+      "Bash(npm install @neondatabase/serverless)",
+      "Bash(find \"c:\\\\Users\\\\USUARIO PC\\\\Downloads\\\\b_iW5hO7UK2sA-1771966977845\\\\app\" -maxdepth 2 -type d -name '\\(page|layout\\)')",
+      "Bash(npm install jspdf --legacy-peer-deps)"
     ]
   }
 }

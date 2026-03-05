@@ -44,8 +44,13 @@ import {
   ChevronDown,
   Link2,
   Copy,
+  History,
+  Clock,
+  BarChart3,
 } from "lucide-react";
 import Link from "next/link";
+import { format } from "date-fns";
+import { es } from "date-fns/locale";
 
 const DAYS = [
   "Domingo",
@@ -103,6 +108,20 @@ export function RoutinesContent() {
     logs.forEach((l) => l.exercises.forEach((e) => names.add(e.exerciseName)));
     return Array.from(names).sort();
   }, []);
+
+  // History dialog state
+  const [historyRoutineId, setHistoryRoutineId] = useState<number | null>(null);
+  const [historyRoutineName, setHistoryRoutineName] = useState("");
+
+  const routineHistory = useLiveQuery(async () => {
+    if (!historyRoutineId) return null;
+    const logs = await db.workoutLogs
+      .where("routineId")
+      .equals(historyRoutineId)
+      .toArray();
+    logs.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+    return logs.slice(0, 10);
+  }, [historyRoutineId]);
 
   // Routine sheet state
   const [sheetOpen, setSheetOpen] = useState(false);
@@ -333,6 +352,18 @@ export function RoutinesContent() {
                       variant="ghost"
                       size="icon"
                       className="h-9 w-9"
+                      title="Ver historial"
+                      onClick={() => {
+                        setHistoryRoutineId(routine.id!);
+                        setHistoryRoutineName(routine.name);
+                      }}
+                    >
+                      <History className="h-4 w-4" />
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-9 w-9"
                       title="Duplicar rutina"
                       onClick={() => cloneRoutine(routine)}
                     >
@@ -361,6 +392,98 @@ export function RoutinesContent() {
           ))}
         </div>
       )}
+
+      {/* History Dialog */}
+      <Dialog
+        open={historyRoutineId !== null}
+        onOpenChange={(open) => { if (!open) setHistoryRoutineId(null); }}
+      >
+        <DialogContent className="max-w-sm rounded-2xl max-h-[80dvh] flex flex-col">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <History className="h-5 w-5 text-primary" />
+              {historyRoutineName}
+            </DialogTitle>
+          </DialogHeader>
+          <div className="overflow-y-auto flex-1 space-y-3 pr-1">
+            {!routineHistory ? (
+              <p className="text-sm text-muted-foreground text-center py-6">
+                Cargando...
+              </p>
+            ) : routineHistory.length === 0 ? (
+              <div className="text-center py-8">
+                <BarChart3 className="h-10 w-10 mx-auto text-muted-foreground/30 mb-3" />
+                <p className="text-sm text-muted-foreground">
+                  Sin entrenamientos registrados aún.
+                </p>
+              </div>
+            ) : (
+              routineHistory.map((log, i) => {
+                const vol = log.exercises.reduce(
+                  (sum, ex) =>
+                    sum +
+                    ex.sets
+                      .filter((s) => s.completed)
+                      .reduce(
+                        (s2, s) =>
+                          s2 + (Number(s.weight) || 0) * (Number(s.reps) || 0),
+                        0,
+                      ),
+                  0,
+                );
+                const mins = Math.round(log.duration / 60);
+                return (
+                  <div
+                    key={log.id ?? i}
+                    className="rounded-xl border bg-card p-3 space-y-1"
+                  >
+                    <div className="flex items-center justify-between">
+                      <p className="text-sm font-semibold text-foreground">
+                        {format(new Date(log.date), "d MMM yyyy", { locale: es })}
+                      </p>
+                      {log.completed && (
+                        <span className="text-[10px] font-bold text-green-400 bg-green-500/10 border border-green-500/20 rounded-full px-2 py-0.5">
+                          Completado
+                        </span>
+                      )}
+                    </div>
+                    <div className="flex items-center gap-4 text-xs text-muted-foreground">
+                      <span className="flex items-center gap-1">
+                        <Clock className="h-3 w-3" />
+                        {mins} min
+                      </span>
+                      {vol > 0 && (
+                        <span className="flex items-center gap-1">
+                          <BarChart3 className="h-3 w-3" />
+                          {vol >= 1000
+                            ? `${(vol / 1000).toFixed(1)}t`
+                            : `${vol.toFixed(0)} kg`}{" "}
+                          vol.
+                        </span>
+                      )}
+                      <span>{log.exercises.length} ejercicios</span>
+                    </div>
+                    {log.notes && (
+                      <p className="text-xs text-muted-foreground italic border-t border-border/40 pt-1 mt-1">
+                        "{log.notes}"
+                      </p>
+                    )}
+                  </div>
+                );
+              })
+            )}
+          </div>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              className="w-full"
+              onClick={() => setHistoryRoutineId(null)}
+            >
+              Cerrar
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* Routine Sheet (Bottom) */}
       <Sheet open={sheetOpen} onOpenChange={setSheetOpen}>

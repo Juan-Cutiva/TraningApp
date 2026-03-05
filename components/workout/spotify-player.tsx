@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useRef } from "react";
 import { useSpotify } from "@/components/spotify/spotify-context";
+import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent } from "@/components/ui/card";
@@ -146,7 +147,7 @@ export function SpotifyPlayer({ compact = false }: SpotifyPlayerProps) {
         setCurrentDeviceId(id);
         return id;
       }
-      alert("No se encontró un dispositivo activo. Abre Spotify en tu dispositivo.");
+      toast.warning("No se encontró un dispositivo activo. Abre Spotify en tu dispositivo.");
       return null;
     } catch {
       return null;
