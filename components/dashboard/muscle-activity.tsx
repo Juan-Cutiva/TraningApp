@@ -1,5 +1,6 @@
 "use client";
 
+import { useMemo } from "react";
 import { useLiveQuery } from "dexie-react-hooks";
 import { db } from "@/lib/db";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -11,33 +12,33 @@ export function MuscleActivity() {
     db.workoutLogs.where("completed").equals(1).toArray(),
   );
 
-  if (!logs) return null;
+  const { muscleData, maxVolume } = useMemo(() => {
+    if (!logs) return { muscleData: [], maxVolume: 0 };
 
-  const now = new Date();
-  const last7Days = subDays(now, 7);
+    const now = new Date();
+    const last7Days = subDays(now, 7);
+    const recentLogs = logs.filter((l) => isAfter(new Date(l.date), last7Days));
 
-  const recentLogs = logs.filter((l) => isAfter(new Date(l.date), last7Days));
-
-  const muscleCounts: Record<string, number> = {};
-
-  recentLogs.forEach((log) => {
-    log.exercises.forEach((ex) => {
-      const completedSets = ex.sets.filter((s) => s.completed).length;
-      if (completedSets > 0) {
-        // Normalize common groups if needed, or trust the user inputs
-        const group = ex.muscleGroup || "Otros";
-        muscleCounts[group] = (muscleCounts[group] || 0) + completedSets;
-      }
+    const muscleCounts: Record<string, number> = {};
+    recentLogs.forEach((log) => {
+      log.exercises.forEach((ex) => {
+        const completedSets = ex.sets.filter((s) => s.completed).length;
+        if (completedSets > 0) {
+          const group = ex.muscleGroup || "Otros";
+          muscleCounts[group] = (muscleCounts[group] || 0) + completedSets;
+        }
+      });
     });
-  });
 
-  const muscleData = Object.entries(muscleCounts)
-    .sort((a, b) => b[1] - a[1]) // Sort by highest volume
-    .slice(0, 5); // Top 5 muscles to fit cleanly
+    const data = Object.entries(muscleCounts)
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 5);
+    const max = data.length > 0 ? Math.max(...data.map((d) => d[1])) : 0;
+    return { muscleData: data, maxVolume: max };
+  }, [logs]);
 
+  if (!logs) return null;
   if (muscleData.length === 0) return null;
-
-  const maxVolume = Math.max(...muscleData.map((d) => d[1]));
 
   return (
     <Card className="mb-6">
@@ -59,7 +60,7 @@ export function MuscleActivity() {
               </div>
               <div className="h-2 w-full bg-secondary rounded-full overflow-hidden">
                 <div
-                  className="h-full bg-primary"
+                  className="h-full bg-primary transition-all duration-500 ease-out"
                   style={{ width: `${(count / maxVolume) * 100}%` }}
                 />
               </div>

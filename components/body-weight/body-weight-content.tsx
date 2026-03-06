@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
+import { ErrorBoundary } from "@/components/error-boundary";
 import { useLiveQuery } from "dexie-react-hooks";
 import { db, type BodyWeightEntry, type WeightGoal } from "@/lib/db";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -26,6 +27,7 @@ import {
 } from "lucide-react";
 import { format } from "date-fns";
 import { es } from "date-fns/locale";
+import { toast } from "sonner";
 import {
   LineChart,
   Line,
@@ -53,6 +55,10 @@ export function BodyWeightContent() {
     db.weightGoals.orderBy("createdAt").reverse().first(),
   );
 
+  const userSettings = useLiveQuery(() =>
+    db.userSettings.toCollection().first(),
+  );
+
   useEffect(() => {
     setMounted(true);
   }, []);
@@ -62,21 +68,37 @@ export function BodyWeightContent() {
   const weightChange =
     latestWeight && firstWeight ? latestWeight - firstWeight : 0;
 
-  const goalProgress =
-    weightGoal && latestWeight
-      ? weightGoal.targetWeight > weightGoal.startWeight
-        ? ((latestWeight - weightGoal.startWeight) /
-            (weightGoal.targetWeight - weightGoal.startWeight)) *
-          100
-        : ((weightGoal.startWeight - latestWeight) /
-            (weightGoal.startWeight - weightGoal.targetWeight)) *
-          100
-      : 0;
+  const goalProgress = (() => {
+    if (!weightGoal || !latestWeight) return 0;
+    const range = Math.abs(weightGoal.targetWeight - weightGoal.startWeight);
+    if (range === 0) return 100; // already at goal
+    const raw =
+      weightGoal.targetWeight > weightGoal.startWeight
+        ? ((latestWeight - weightGoal.startWeight) / range) * 100
+        : ((weightGoal.startWeight - latestWeight) / range) * 100;
+    return Math.min(100, Math.max(0, raw));
+  })();
 
   const goalDirection =
     weightGoal && weightGoal.targetWeight > weightGoal.startWeight
       ? "up"
       : "down";
+
+  // IMC calculation
+  const heightCm = userSettings?.height;
+  const imc =
+    latestWeight && heightCm && heightCm > 0
+      ? latestWeight / Math.pow(heightCm / 100, 2)
+      : null;
+
+  function imcCategory(bmi: number): { label: string; color: string } {
+    // Using -500 dark variants for light mode contrast (WCAG AA on white backgrounds)
+    if (bmi < 18.5) return { label: "Bajo peso",   color: "text-blue-600 dark:text-blue-400" };
+    if (bmi < 25)   return { label: "Peso normal",  color: "text-green-600 dark:text-green-400" };
+    if (bmi < 30)   return { label: "Sobrepeso",    color: "text-yellow-600 dark:text-yellow-400" };
+    if (bmi < 35)   return { label: "Obesidad I",   color: "text-orange-600 dark:text-orange-400" };
+    return           { label: "Obesidad II+", color: "text-red-600 dark:text-red-400" };
+  }
 
   async function addWeightEntry() {
     if (!newWeight) return;
@@ -92,6 +114,7 @@ export function BodyWeightContent() {
     setNewWeight("");
     setNewNote("");
     setIsAddDialogOpen(false);
+    toast.success(`Peso registrado: ${parseFloat(newWeight).toFixed(1)} kg`);
   }
 
   async function setGoal() {
@@ -114,17 +137,20 @@ export function BodyWeightContent() {
 
     setGoalWeight("");
     setIsGoalDialogOpen(false);
+    toast.success(`Meta establecida: ${parseFloat(goalWeight).toFixed(1)} kg`);
   }
 
   async function deleteWeightEntry(id: number) {
     if (confirm("¿Eliminar este registro de peso?")) {
       await db.bodyWeight.delete(id);
+      toast.success("Registro eliminado");
     }
   }
 
   async function deleteGoal() {
     if (weightGoal?.id && confirm("¿Eliminar esta meta de peso?")) {
       await db.weightGoals.delete(weightGoal.id);
+      toast.success("Meta eliminada");
     }
   }
 
@@ -171,7 +197,7 @@ export function BodyWeightContent() {
       </div>
 
       {/* Current Weight Card */}
-      <Card className="mb-5 bg-gradient-to-br from-primary/10 to-primary/5 border-primary/20">
+      <Card className="mb-5 bg-linear-to-br from-primary/10 to-primary/5 border-primary/20">
         <CardContent className="p-6 text-center">
           <div className="flex items-center justify-center gap-3 mb-2">
             <Scale className="h-8 w-8 text-primary" />
@@ -208,6 +234,26 @@ export function BodyWeightContent() {
                   </span>
                 </div>
               )}
+              {imc !== null && (
+                <div className="mt-3 pt-3 border-t border-primary/20 flex items-center justify-center gap-3">
+                  <div className="text-center">
+                    <p className="text-xs text-muted-foreground uppercase tracking-wider font-medium">
+                      IMC
+                    </p>
+                    <p className={`text-2xl font-bold ${imcCategory(imc).color}`}>
+                      {imc.toFixed(1)}
+                    </p>
+                    <p className={`text-xs font-semibold ${imcCategory(imc).color}`}>
+                      {imcCategory(imc).label}
+                    </p>
+                  </div>
+                </div>
+              )}
+              {!heightCm && (
+                <p className="text-xs text-muted-foreground mt-3 opacity-70">
+                  Configura tu altura en Ajustes para ver el IMC
+                </p>
+              )}
             </>
           ) : (
             <div className="py-6">
@@ -232,9 +278,11 @@ export function BodyWeightContent() {
               variant="ghost"
               size="sm"
               onClick={deleteGoal}
+              aria-label="Eliminar meta de peso"
+              title="Eliminar meta de peso"
               className="h-8 w-8 p-0 text-destructive hover:text-destructive"
             >
-              <Trash2 className="h-4 w-4" />
+              <Trash2 className="h-4 w-4" aria-hidden="true" />
             </Button>
           </CardHeader>
           <CardContent className="p-4 pt-2">
@@ -280,6 +328,7 @@ export function BodyWeightContent() {
             <CardTitle className="text-base">Historial de Peso</CardTitle>
           </CardHeader>
           <CardContent className="p-4 pt-2">
+            <ErrorBoundary>
             <ResponsiveContainer width="100%" height={200}>
               <LineChart data={chartData}>
                 <CartesianGrid
@@ -326,6 +375,7 @@ export function BodyWeightContent() {
                 />
               </LineChart>
             </ResponsiveContainer>
+            </ErrorBoundary>
           </CardContent>
         </Card>
       )}
@@ -371,9 +421,11 @@ export function BodyWeightContent() {
                           variant="ghost"
                           size="icon"
                           onClick={() => deleteWeightEntry(entry.id!)}
-                          className="h-8 w-8 opacity-0 group-hover:opacity-100 transition-opacity text-destructive hover:text-destructive"
+                          aria-label={`Eliminar registro de ${entry.weight.toFixed(1)} kg`}
+                          title={`Eliminar registro de ${entry.weight.toFixed(1)} kg`}
+                          className="h-8 w-8 text-muted-foreground/40 hover:text-destructive"
                         >
-                          <Trash2 className="h-4 w-4" />
+                          <Trash2 className="h-4 w-4" aria-hidden="true" />
                         </Button>
                       )}
                     </div>
@@ -391,7 +443,7 @@ export function BodyWeightContent() {
             <p className="text-lg font-semibold text-foreground">
               Sin registros aún
             </p>
-            <p className="text-sm text-muted-foreground mt-1 max-w-[250px]">
+            <p className="text-sm text-muted-foreground mt-1 max-w-62.5">
               Agrega tu peso corporal para seguir tu progreso y establecer metas
             </p>
             <Button
@@ -413,8 +465,9 @@ export function BodyWeightContent() {
           </DialogHeader>
           <div className="flex flex-col gap-4 py-4">
             <div>
-              <Label className="text-sm font-medium">Peso (kg)</Label>
+              <Label htmlFor="new-weight" className="text-sm font-medium">Peso (kg)</Label>
               <Input
+                id="new-weight"
                 type="text"
                 inputMode="decimal"
                 value={newWeight}
@@ -425,8 +478,9 @@ export function BodyWeightContent() {
               />
             </div>
             <div>
-              <Label className="text-sm font-medium">Nota (opcional)</Label>
+              <Label htmlFor="new-note" className="text-sm font-medium">Nota (opcional)</Label>
               <Input
+                id="new-note"
                 value={newNote}
                 onChange={(e) => setNewNote(e.target.value)}
                 placeholder="Ej: Mañana, en ayunas..."
@@ -463,8 +517,9 @@ export function BodyWeightContent() {
               </p>
             </div>
             <div>
-              <Label className="text-sm font-medium">Meta de peso (kg)</Label>
+              <Label htmlFor="goal-weight" className="text-sm font-medium">Meta de peso (kg)</Label>
               <Input
+                id="goal-weight"
                 type="text"
                 inputMode="decimal"
                 value={goalWeight}

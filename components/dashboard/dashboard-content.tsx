@@ -1,7 +1,8 @@
 "use client";
 
+import { useState, useEffect, useMemo } from "react";
 import { useLiveQuery } from "dexie-react-hooks";
-import { db, getTodayRoutine } from "@/lib/db";
+import { db, getTodayRoutine, estimateRoutineDuration, type Routine } from "@/lib/db";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
@@ -17,10 +18,67 @@ import {
   TrendingDown,
   Target,
   Plus,
+  Play,
+  AlertTriangle,
+  Trash2,
+  Timer,
+  CheckCircle2,
+  ArrowUp,
+  ArrowDown,
+  Minus,
 } from "lucide-react";
-import { startOfWeek, endOfWeek, isWithinInterval, format } from "date-fns";
+import { startOfWeek, endOfWeek, isWithinInterval, format, subWeeks } from "date-fns";
 import { es } from "date-fns/locale";
 import { MuscleActivity } from "./muscle-activity";
+
+interface ActiveSession {
+  routineId: number;
+  routineName: string;
+  elapsed: number;
+  completedSets: number;
+  totalSets: number;
+}
+
+/** Returns consecutive days (ending today or yesterday) where at least one workout was completed */
+function calcStreak(logs: { date: Date | string }[]): number {
+  if (!logs.length) return 0;
+
+  const trainedDays = new Set<string>();
+  for (const log of logs) {
+    const d = new Date(log.date);
+    if (isNaN(d.getTime())) continue;
+    trainedDays.add(
+      `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`,
+    );
+  }
+
+  const today = new Date();
+  const toKey = (d: Date) =>
+    `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+
+  const check = new Date(today);
+  check.setHours(12, 0, 0, 0);
+
+  // If today not trained yet, start streak from yesterday
+  if (!trainedDays.has(toKey(check))) {
+    check.setDate(check.getDate() - 1);
+  }
+
+  let streak = 0;
+  while (trainedDays.has(toKey(check))) {
+    streak++;
+    check.setDate(check.getDate() - 1);
+  }
+  return streak;
+}
+
+function fmtTime(seconds: number) {
+  const h = Math.floor(seconds / 3600);
+  const m = Math.floor((seconds % 3600) / 60);
+  const s = seconds % 60;
+  if (h > 0) return `${h}:${m.toString().padStart(2, "0")}:${s.toString().padStart(2, "0")}`;
+  return `${m.toString().padStart(2, "0")}:${s.toString().padStart(2, "0")}`;
+}
 
 export function DashboardContent() {
   const todayRoutine = useLiveQuery(() => getTodayRoutine());
@@ -29,6 +87,59 @@ export function DashboardContent() {
   );
   const routines = useLiveQuery(() => db.routines.toArray());
   const personalRecords = useLiveQuery(() => db.personalRecords.toArray());
+
+  // Active workout sessions stored in localStorage
+  const [activeSessions, setActiveSessions] = useState<ActiveSession[]>([]);
+
+  const refreshActiveSessions = () => {
+    if (typeof window === "undefined") return;
+    const found: ActiveSession[] = [];
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i);
+      if (key?.startsWith("workout_active_")) {
+        try {
+          const session = JSON.parse(localStorage.getItem(key)!);
+          const routine = routines?.find((r) => r.id === session.routineId);
+          found.push({
+            routineId: session.routineId,
+            routineName: routine?.name ?? "Entrenamiento",
+            elapsed: session.elapsed ?? 0,
+            completedSets:
+              // eslint-disable-next-line @typescript-eslint/no-explicit-any
+              session.exerciseLogs?.reduce((acc: number, ex: any) =>
+                acc + ex.sets.filter((s: any) => s.completed).length, 0) ?? 0,
+            totalSets:
+              // eslint-disable-next-line @typescript-eslint/no-explicit-any
+              session.exerciseLogs?.reduce((acc: number, ex: any) =>
+                acc + ex.sets.length, 0) ?? 0,
+          });
+        } catch {
+          // malformed session — ignore
+        }
+      }
+    }
+    setActiveSessions(found);
+  };
+
+  // Refrescar al montar y cada vez que routines cambie o el usuario vuelve a la pestaña
+  useEffect(() => {
+    refreshActiveSessions();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [routines]);
+
+  useEffect(() => {
+    const handleVisibility = () => {
+      if (!document.hidden) refreshActiveSessions();
+    };
+    document.addEventListener("visibilitychange", handleVisibility);
+    return () => document.removeEventListener("visibilitychange", handleVisibility);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [routines]);
+
+  function discardSession(routineId: number) {
+    localStorage.removeItem(`workout_active_${routineId}`);
+    setActiveSessions((prev) => prev.filter((s) => s.routineId !== routineId));
+  }
 
   // Body weight data
   const weightLogs = useLiveQuery(() =>
@@ -43,11 +154,22 @@ export function DashboardContent() {
   const weekEnd = endOfWeek(now, { weekStartsOn: 1 });
 
   const weekLogs =
-    workoutLogs?.filter((l) =>
-      isWithinInterval(new Date(l.date), { start: weekStart, end: weekEnd }),
-    ) ?? [];
+    workoutLogs?.filter((l) => {
+      const d = new Date(l.date);
+      return !isNaN(d.getTime()) && isWithinInterval(d, { start: weekStart, end: weekEnd });
+    }) ?? [];
 
   const weeklyDuration = weekLogs.reduce((s, l) => s + l.duration, 0);
+
+  // Last week comparison
+  const lastWeekStart = startOfWeek(subWeeks(now, 1), { weekStartsOn: 1 });
+  const lastWeekEnd = endOfWeek(subWeeks(now, 1), { weekStartsOn: 1 });
+  const lastWeekLogs =
+    workoutLogs?.filter((l) => {
+      const d = new Date(l.date);
+      return !isNaN(d.getTime()) && isWithinInterval(d, { start: lastWeekStart, end: lastWeekEnd });
+    }) ?? [];
+  const lastWeekDuration = lastWeekLogs.reduce((s, l) => s + l.duration, 0);
 
   // Consistency: workouts this week / routines assigned to days
   const assignedDays =
@@ -59,23 +181,41 @@ export function DashboardContent() {
 
   const dayName = format(now, "EEEE", { locale: es });
 
+  // Racha de entrenamiento
+  const streak = useMemo(() => calcStreak(workoutLogs ?? []), [workoutLogs]);
+
+  // ¿La rutina de hoy ya fue completada?
+  const todayStr = now.toDateString();
+  const todayCompleted = useMemo(
+    () =>
+      !!todayRoutine &&
+      (workoutLogs?.some(
+        (l) =>
+          new Date(l.date).toDateString() === todayStr &&
+          l.routineId === todayRoutine?.id,
+      ) ?? false),
+    [workoutLogs, todayRoutine, todayStr],
+  );
+
   // Body weight calculations
   const latestWeight = weightLogs?.[0]?.weight;
   const firstWeight = weightLogs?.[weightLogs.length - 1]?.weight;
   const weightChange =
     latestWeight && firstWeight ? latestWeight - firstWeight : 0;
 
-  // Goal progress
-  const goalProgress =
-    weightGoal && latestWeight
-      ? weightGoal.targetWeight > weightGoal.startWeight
-        ? ((latestWeight - weightGoal.startWeight) /
-            (weightGoal.targetWeight - weightGoal.startWeight)) *
-          100
-        : ((weightGoal.startWeight - latestWeight) /
-            (weightGoal.startWeight - weightGoal.targetWeight)) *
-          100
-      : null;
+  // Goal progress — con guard contra división por cero y resultado NaN/Infinity
+  const goalProgress = (() => {
+    if (!weightGoal || !latestWeight) return null;
+    const { targetWeight, startWeight } = weightGoal;
+    const range = targetWeight - startWeight;
+    if (range === 0) return 100; // ya en el objetivo
+    const raw =
+      range > 0
+        ? ((latestWeight - startWeight) / range) * 100
+        : ((startWeight - latestWeight) / -range) * 100;
+    if (!isFinite(raw) || isNaN(raw)) return 0;
+    return Math.min(100, Math.max(0, raw));
+  })();
 
   return (
     <div className="mx-auto max-w-lg px-4 pt-6">
@@ -89,29 +229,105 @@ export function DashboardContent() {
         </h1>
       </div>
 
+      {/* Streak banner */}
+      {streak > 0 && (
+        <div className="mb-5 flex items-center gap-4 rounded-2xl bg-orange-500/10 border border-orange-500/20 px-4 py-3">
+          <span className="text-4xl leading-none select-none">🔥</span>
+          <div>
+            <p className="text-xl font-bold text-foreground leading-tight">
+              {streak} {streak === 1 ? "día" : "días"} de racha
+            </p>
+            <p className="text-xs text-muted-foreground mt-0.5">
+              {streak >= 7
+                ? "¡Semana perfecta! Sigue así"
+                : streak >= 3
+                  ? "¡No rompas la cadena!"
+                  : "¡Buen comienzo, mantén el ritmo!"}
+            </p>
+          </div>
+        </div>
+      )}
+
+      {/* Active workout sessions banner */}
+      {activeSessions.map((session) => (
+        <Card
+          key={session.routineId}
+          className="mb-4 border-amber-500/50 bg-amber-500/10"
+        >
+          <CardContent className="p-4">
+            <div className="flex items-start justify-between gap-3">
+              <div className="flex items-center gap-3 flex-1 min-w-0">
+                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-amber-500/20">
+                  <AlertTriangle className="h-5 w-5 text-amber-400" />
+                </div>
+                <div className="min-w-0">
+                  <p className="text-xs font-bold text-amber-400 uppercase tracking-wide">
+                    Entrenamiento en curso
+                  </p>
+                  <p className="font-semibold text-foreground truncate">
+                    {session.routineName}
+                  </p>
+                  <p className="text-xs text-muted-foreground">
+                    {session.completedSets}/{session.totalSets} series •{" "}
+                    {fmtTime(session.elapsed)}
+                  </p>
+                </div>
+              </div>
+              <div className="flex gap-2 shrink-0">
+                <Link href={`/workout/${session.routineId}`}>
+                  <Button size="sm" className="gap-1 h-8">
+                    <Play className="h-3 w-3" />
+                    Retomar
+                  </Button>
+                </Link>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="h-8 w-8 text-destructive hover:text-destructive"
+                  onClick={() => discardSession(session.routineId)}
+                  title="Descartar sesión"
+                >
+                  <Trash2 className="h-4 w-4" />
+                </Button>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+      ))}
+
       {/* Today's Routine CTA */}
-      <Card className="mb-5 border-primary/20 bg-gradient-to-br from-primary/10 to-primary/5">
+      <Card className="mb-5 border-primary/20 bg-linear-to-br from-primary/10 to-primary/5">
         <CardContent className="p-5">
           {todayRoutine ? (
             <div className="flex items-center justify-between">
               <div className="flex-1">
-                <p className="text-xs font-bold text-primary uppercase tracking-wider">
-                  Rutina de hoy
-                </p>
+                <div className="flex items-center gap-2">
+                  <p className="text-xs font-bold text-primary uppercase tracking-wider">
+                    Rutina de hoy
+                  </p>
+                  {todayCompleted && (
+                    <span className="flex items-center gap-1 text-[10px] font-bold text-green-400 bg-green-500/15 border border-green-500/20 rounded-full px-2 py-0.5">
+                      <CheckCircle2 className="h-3 w-3" />
+                      Completada
+                    </span>
+                  )}
+                </div>
                 <p className="mt-1.5 text-xl font-bold text-foreground">
                   {todayRoutine.name}
                 </p>
                 <p className="text-sm text-muted-foreground mt-1">
-                  {todayRoutine.exercises.length} ejercicios
+                  {todayRoutine.exercises.length} ejercicios •{" "}
+                  ~{Math.round(estimateRoutineDuration(todayRoutine) / 60)} min
                 </p>
               </div>
               <Link href={`/workout/${todayRoutine.id}`}>
                 <Button
                   size="lg"
+                  variant={todayCompleted ? "outline" : "default"}
                   className="gap-2 rounded-xl font-semibold h-12 px-6"
                 >
                   <Dumbbell className="h-5 w-5" />
-                  Comenzar
+                  {todayCompleted ? "Repetir" : "Comenzar"}
                 </Button>
               </Link>
             </div>
@@ -170,9 +386,67 @@ export function DashboardContent() {
         </Card>
       </div>
 
+      {/* Weekly comparison */}
+      {(weekLogs.length > 0 || lastWeekLogs.length > 0) && (
+        <Card className="mb-4">
+          <CardContent className="p-4">
+            <p className="text-xs font-bold text-muted-foreground uppercase tracking-wider mb-3">
+              Esta semana vs semana anterior
+            </p>
+            <div className="grid grid-cols-2 gap-3">
+              {/* Workouts */}
+              {(() => {
+                const diff = weekLogs.length - lastWeekLogs.length;
+                return (
+                  <div className="flex flex-col gap-1">
+                    <div className="flex items-center gap-1.5">
+                      <Dumbbell className="h-3.5 w-3.5 text-muted-foreground" />
+                      <span className="text-xs text-muted-foreground">Sesiones</span>
+                    </div>
+                    <div className="flex items-end gap-2">
+                      <span className="text-2xl font-bold text-foreground">{weekLogs.length}</span>
+                      {lastWeekLogs.length > 0 && (
+                        <span className={`flex items-center gap-0.5 text-xs font-medium mb-0.5 ${diff > 0 ? "text-green-500" : diff < 0 ? "text-red-500" : "text-muted-foreground"}`}>
+                          {diff > 0 ? <ArrowUp className="h-3 w-3" /> : diff < 0 ? <ArrowDown className="h-3 w-3" /> : <Minus className="h-3 w-3" />}
+                          {diff > 0 ? `+${diff}` : diff}
+                        </span>
+                      )}
+                    </div>
+                    <span className="text-xs text-muted-foreground">anterior: {lastWeekLogs.length}</span>
+                  </div>
+                );
+              })()}
+              {/* Duration */}
+              {(() => {
+                const diff = weeklyDuration - lastWeekDuration;
+                const fmt = (s: number) => s > 3600 ? `${(s / 3600).toFixed(1)}h` : `${Math.round(s / 60)}m`;
+                return (
+                  <div className="flex flex-col gap-1">
+                    <div className="flex items-center gap-1.5">
+                      <Timer className="h-3.5 w-3.5 text-muted-foreground" />
+                      <span className="text-xs text-muted-foreground">Tiempo</span>
+                    </div>
+                    <div className="flex items-end gap-2">
+                      <span className="text-2xl font-bold text-foreground">{fmt(weeklyDuration)}</span>
+                      {lastWeekDuration > 0 && (
+                        <span className={`flex items-center gap-0.5 text-xs font-medium mb-0.5 ${diff > 0 ? "text-green-500" : diff < 0 ? "text-red-500" : "text-muted-foreground"}`}>
+                          {diff > 0 ? <ArrowUp className="h-3 w-3" /> : diff < 0 ? <ArrowDown className="h-3 w-3" /> : <Minus className="h-3 w-3" />}
+                          {diff > 60 ? `+${fmt(Math.abs(diff))}` : diff < -60 ? `-${fmt(Math.abs(diff))}` : "="}
+                        </span>
+                      )}
+                    </div>
+                    <span className="text-xs text-muted-foreground">anterior: {fmt(lastWeekDuration)}</span>
+                  </div>
+                );
+              })()}
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
       {/* Weight & Goal Card */}
       {latestWeight ? (
-        <Card className="mb-4 bg-gradient-to-br from-chart-4/10 to-chart-4/5 border-chart-4/30">
+        <Card className="mb-4 bg-linear-to-br from-chart-4/10 to-chart-4/5 border-chart-4/30">
           <CardContent className="p-5">
             <div className="flex items-center justify-between mb-3">
               <div className="flex items-center gap-2">
@@ -249,7 +523,7 @@ export function DashboardContent() {
           </CardContent>
         </Card>
       ) : (
-        <Card className="mb-4 bg-gradient-to-br from-chart-4/10 to-chart-4/5 border-chart-4/30">
+        <Card className="mb-4 bg-linear-to-br from-chart-4/10 to-chart-4/5 border-chart-4/30">
           <CardContent className="p-5">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2">

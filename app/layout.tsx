@@ -1,6 +1,10 @@
 import type { Metadata, Viewport } from "next";
 import { Inter, Space_Grotesk } from "next/font/google";
 import { ThemeProvider } from "@/components/theme-provider";
+import { AppShell } from "@/components/app-shell";
+import { SpotifyProvider } from "@/components/spotify/spotify-context";
+import { Toaster } from "@/components/ui/sonner";
+import { AuthProvider } from "@/components/auth/auth-provider";
 import "./globals.css";
 
 const inter = Inter({ subsets: ["latin"], variable: "--font-inter" });
@@ -21,20 +25,50 @@ export const viewport: Viewport = {
 };
 
 export const metadata: Metadata = {
-  title: "Juan Traning - Entrenamiento Personal",
+  title: {
+    default: "Cuti Traning - Entrenamiento Personal",
+    template: "%s | Cuti Traning",
+  },
   description:
     "Tu entrenador personal avanzado. Registra entrenamientos, analiza progreso y alcanza tus objetivos. 100% offline.",
+  keywords: [
+    "entrenamiento",
+    "fitness",
+    "gym",
+    "rutinas",
+    "ejercicio",
+    "peso corporal",
+    "records personales",
+    "app fitness offline",
+  ],
   manifest: "/manifest.json",
+  robots: {
+    index: true,
+    follow: false,
+  },
+  openGraph: {
+    title: "Cuti Traning - Entrenamiento Personal",
+    description:
+      "Tu entrenador personal avanzado. Registra entrenamientos, analiza progreso y alcanza tus objetivos. 100% offline.",
+    type: "website",
+    locale: "es_ES",
+    siteName: "Cuti Traning",
+  },
+  twitter: {
+    card: "summary",
+    title: "Cuti Traning - Entrenamiento Personal",
+    description:
+      "Tu entrenador personal avanzado. Registra entrenamientos, analiza progreso y alcanza tus objetivos. 100% offline.",
+  },
   appleWebApp: {
     capable: true,
     statusBarStyle: "black-translucent",
-    title: "Juan Traning",
+    title: "Cuti Traning",
   },
   icons: {
     icon: [
       { url: "/icon.svg", type: "image/svg+xml" },
-      { url: "/icon-192.png", sizes: "192x192", type: "image/png" },
-      { url: "/icon-512.png", sizes: "512x512", type: "image/png" },
+      { url: "/icon-192.svg", sizes: "192x192", type: "image/svg+xml" },
     ],
     apple: [{ url: "/apple-icon.png", sizes: "180x180", type: "image/png" }],
   },
@@ -51,7 +85,12 @@ export default function RootLayout({
         className={`${inter.variable} ${spaceGrotesk.variable} font-sans antialiased`}
       >
         <ThemeProvider attribute="class" defaultTheme="dark" enableSystem>
-          {children}
+          <AuthProvider>
+            <SpotifyProvider>
+              <AppShell>{children}</AppShell>
+            </SpotifyProvider>
+          </AuthProvider>
+          <Toaster position="top-center" richColors />
         </ThemeProvider>
       </body>
     </html>

@@ -16,6 +16,7 @@ export const BASE_ROUTINES: Omit<Routine, "id" | "createdAt" | "updatedAt">[] =
           unit: "kg",
           restSeconds: 150,
         },
+
         {
           id: "mon_02",
           name: "Press banca mancuernas",
@@ -26,6 +27,7 @@ export const BASE_ROUTINES: Omit<Routine, "id" | "createdAt" | "updatedAt">[] =
           unit: "kg",
           restSeconds: 180,
         },
+
         {
           id: "mon_03",
           name: "Remo pecho apoyado máquina",
@@ -34,9 +36,10 @@ export const BASE_ROUTINES: Omit<Routine, "id" | "createdAt" | "updatedAt">[] =
           reps: "8-12",
           targetWeight: 0,
           unit: "kg",
-          restSeconds: 30,
+          restSeconds: 20,
           supersetId: "6kb6uh0",
         },
+
         {
           id: "mon_04",
           name: "Press inclinado máquina",
@@ -45,9 +48,10 @@ export const BASE_ROUTINES: Omit<Routine, "id" | "createdAt" | "updatedAt">[] =
           reps: "8-12",
           targetWeight: 0,
           unit: "kg",
-          restSeconds: 180,
+          restSeconds: 120,
           supersetId: "6kb6uh0",
         },
+
         {
           id: "mon_05",
           name: "Remo en cable unilateral",
@@ -58,6 +62,7 @@ export const BASE_ROUTINES: Omit<Routine, "id" | "createdAt" | "updatedAt">[] =
           unit: "kg",
           restSeconds: 150,
         },
+
         {
           id: "mon_06",
           name: "Elevación lateral polea",
@@ -66,9 +71,10 @@ export const BASE_ROUTINES: Omit<Routine, "id" | "createdAt" | "updatedAt">[] =
           reps: "14-16",
           targetWeight: 0,
           unit: "kg",
-          restSeconds: 30,
+          restSeconds: 15,
           supersetId: "q38ybcs",
         },
+
         {
           id: "mon_08",
           name: "Extensión tríceps katana",
@@ -77,9 +83,10 @@ export const BASE_ROUTINES: Omit<Routine, "id" | "createdAt" | "updatedAt">[] =
           reps: "10-12",
           targetWeight: 0,
           unit: "kg",
-          restSeconds: 180,
+          restSeconds: 120,
           supersetId: "q38ybcs",
         },
+
         {
           id: "mon_07",
           name: "Curl inclinado mancuernas",
@@ -88,9 +95,10 @@ export const BASE_ROUTINES: Omit<Routine, "id" | "createdAt" | "updatedAt">[] =
           reps: "8-12",
           targetWeight: 0,
           unit: "kg",
-          restSeconds: 30,
+          restSeconds: 15,
           supersetId: "061zmjp",
         },
+
         {
           id: "mon_09",
           name: "Encogimiento máquina con pausa",
@@ -99,9 +107,10 @@ export const BASE_ROUTINES: Omit<Routine, "id" | "createdAt" | "updatedAt">[] =
           reps: "10-12",
           targetWeight: 0,
           unit: "kg",
-          restSeconds: 180,
+          restSeconds: 120,
           supersetId: "061zmjp",
         },
+
         {
           id: "mon_10",
           name: "Curl araña",
@@ -110,8 +119,9 @@ export const BASE_ROUTINES: Omit<Routine, "id" | "createdAt" | "updatedAt">[] =
           reps: "8-12",
           targetWeight: 0,
           unit: "kg",
-          restSeconds: 150,
+          restSeconds: 120,
         },
+
         {
           id: "mon_11",
           name: "Extensión de tríceps en máquina",
@@ -120,10 +130,11 @@ export const BASE_ROUTINES: Omit<Routine, "id" | "createdAt" | "updatedAt">[] =
           reps: "12-15",
           targetWeight: 0,
           unit: "kg",
-          restSeconds: 150,
+          restSeconds: 120,
         },
       ],
     },
+
     {
       name: "Martes - Pierna + Core",
       dayOfWeek: 2,
@@ -134,10 +145,11 @@ export const BASE_ROUTINES: Omit<Routine, "id" | "createdAt" | "updatedAt">[] =
           muscleGroup: "Piernas",
           sets: 3,
           reps: "12-15",
-          targetWeight: 85,
+          targetWeight: 0,
           unit: "kg",
-          restSeconds: 150,
+          restSeconds: 120,
         },
+
         {
           id: "tue_03",
           name: "Hack squat profundo",
@@ -148,6 +160,7 @@ export const BASE_ROUTINES: Omit<Routine, "id" | "createdAt" | "updatedAt">[] =
           unit: "kg",
           restSeconds: 180,
         },
+
         {
           id: "tue_04",
           name: "Prensa inclinada pies bajos",
@@ -158,6 +171,7 @@ export const BASE_ROUTINES: Omit<Routine, "id" | "createdAt" | "updatedAt">[] =
           unit: "kg",
           restSeconds: 180,
         },
+
         {
           id: "tue_07",
           name: "Hip thrust",
@@ -168,6 +182,7 @@ export const BASE_ROUTINES: Omit<Routine, "id" | "createdAt" | "updatedAt">[] =
           unit: "kg",
           restSeconds: 180,
         },
+
         {
           id: "tue_05",
           name: "Curl femoral sentado",
@@ -176,9 +191,10 @@ export const BASE_ROUTINES: Omit<Routine, "id" | "createdAt" | "updatedAt">[] =
           reps: "8-12",
           targetWeight: 0,
           unit: "kg",
-          restSeconds: 30,
+          restSeconds: 15,
           supersetId: "tnxtcqx",
         },
+
         {
           id: "tue_06",
           name: "Extensión unilateral",
@@ -187,9 +203,10 @@ export const BASE_ROUTINES: Omit<Routine, "id" | "createdAt" | "updatedAt">[] =
           reps: "12-15",
           targetWeight: 0,
           unit: "kg",
-          restSeconds: 180,
+          restSeconds: 120,
           supersetId: "tnxtcqx",
         },
+
         {
           id: "tue_02",
           name: "Abducción máquina",
@@ -198,9 +215,10 @@ export const BASE_ROUTINES: Omit<Routine, "id" | "createdAt" | "updatedAt">[] =
           reps: "12-15",
           targetWeight: 0,
           unit: "kg",
-          restSeconds: 30,
+          restSeconds: 15,
           supersetId: "rryfhj9",
         },
+
         {
           id: "tue_08",
           name: "Gemelo de pie",
@@ -209,9 +227,10 @@ export const BASE_ROUTINES: Omit<Routine, "id" | "createdAt" | "updatedAt">[] =
           reps: "8-12",
           targetWeight: 0,
           unit: "kg",
-          restSeconds: 180,
+          restSeconds: 120,
           supersetId: "rryfhj9",
         },
+
         {
           id: "tue_09",
           name: "Gemelo sentado",
@@ -220,8 +239,9 @@ export const BASE_ROUTINES: Omit<Routine, "id" | "createdAt" | "updatedAt">[] =
           reps: "12-15",
           targetWeight: 0,
           unit: "kg",
-          restSeconds: 150,
+          restSeconds: 120,
         },
+
         {
           id: "tue_10",
           name: "Russian Twist",
@@ -230,8 +250,9 @@ export const BASE_ROUTINES: Omit<Routine, "id" | "createdAt" | "updatedAt">[] =
           reps: "12-15",
           targetWeight: 0,
           unit: "kg",
-          restSeconds: 150,
+          restSeconds: 75,
         },
+
         {
           id: "tue_11",
           name: "Elevación lateral polea",
@@ -240,9 +261,10 @@ export const BASE_ROUTINES: Omit<Routine, "id" | "createdAt" | "updatedAt">[] =
           reps: "14-16",
           targetWeight: 0,
           unit: "kg",
-          restSeconds: 30,
+          restSeconds: 15,
           supersetId: "g4qafa0",
         },
+
         {
           id: "tue_12",
           name: "Crunch polea ABS",
@@ -251,11 +273,12 @@ export const BASE_ROUTINES: Omit<Routine, "id" | "createdAt" | "updatedAt">[] =
           reps: "12-15",
           targetWeight: 0,
           unit: "kg",
-          restSeconds: 180,
+          restSeconds: 75,
           supersetId: "g4qafa0",
         },
       ],
     },
+
     {
       name: "Jueves - Torso Variación",
       dayOfWeek: 4,
@@ -269,8 +292,8 @@ export const BASE_ROUTINES: Omit<Routine, "id" | "createdAt" | "updatedAt">[] =
           targetWeight: 0,
           unit: "kg",
           restSeconds: 180,
-          supersetId: "y8ynskq",
         },
+
         {
           id: "thu_02",
           name: "Curl predicador mancuerna",
@@ -279,9 +302,10 @@ export const BASE_ROUTINES: Omit<Routine, "id" | "createdAt" | "updatedAt">[] =
           reps: "8-12",
           targetWeight: 0,
           unit: "kg",
-          restSeconds: 30,
+          restSeconds: 15,
           supersetId: "9gwgy04",
         },
+
         {
           id: "thu_03",
           name: "Extensión tríceps polea unilateral",
@@ -290,9 +314,10 @@ export const BASE_ROUTINES: Omit<Routine, "id" | "createdAt" | "updatedAt">[] =
           reps: "8-12",
           targetWeight: 0,
           unit: "kg",
-          restSeconds: 180,
+          restSeconds: 120,
           supersetId: "9gwgy04",
         },
+
         {
           id: "thu_04",
           name: "Remo T-bar pecho apoyado",
@@ -303,6 +328,7 @@ export const BASE_ROUTINES: Omit<Routine, "id" | "createdAt" | "updatedAt">[] =
           unit: "kg",
           restSeconds: 180,
         },
+
         {
           id: "thu_05",
           name: "Face pull pesado",
@@ -311,8 +337,9 @@ export const BASE_ROUTINES: Omit<Routine, "id" | "createdAt" | "updatedAt">[] =
           reps: "12-15",
           targetWeight: 0,
           unit: "kg",
-          restSeconds: 150,
+          restSeconds: 120,
         },
+
         {
           id: "thu_06",
           name: "Press de pecho en máquina",
@@ -321,8 +348,9 @@ export const BASE_ROUTINES: Omit<Routine, "id" | "createdAt" | "updatedAt">[] =
           reps: "8-12",
           targetWeight: 0,
           unit: "kg",
-          restSeconds: 180,
+          restSeconds: 150,
         },
+
         {
           id: "thu_07",
           name: "Press francés con mancuernas",
@@ -331,8 +359,9 @@ export const BASE_ROUTINES: Omit<Routine, "id" | "createdAt" | "updatedAt">[] =
           reps: "8-12",
           targetWeight: 0,
           unit: "kg",
-          restSeconds: 150,
+          restSeconds: 120,
         },
+
         {
           id: "thu_08",
           name: "Curl martillo polea",
@@ -341,9 +370,10 @@ export const BASE_ROUTINES: Omit<Routine, "id" | "createdAt" | "updatedAt">[] =
           reps: "10-12",
           targetWeight: 0,
           unit: "kg",
-          restSeconds: 30,
+          restSeconds: 15,
           supersetId: "mfmclju",
         },
+
         {
           id: "thu_09",
           name: "Elevación lateral máquina",
@@ -352,9 +382,10 @@ export const BASE_ROUTINES: Omit<Routine, "id" | "createdAt" | "updatedAt">[] =
           reps: "14-16",
           targetWeight: 0,
           unit: "kg",
-          restSeconds: 180,
+          restSeconds: 120,
           supersetId: "mfmclju",
         },
+
         {
           id: "thu_10",
           name: "Jalón neutro cerrado V",
@@ -363,9 +394,10 @@ export const BASE_ROUTINES: Omit<Routine, "id" | "createdAt" | "updatedAt">[] =
           reps: "8-12",
           targetWeight: 0,
           unit: "kg",
-          restSeconds: 30,
+          restSeconds: 15,
           supersetId: "qt5s9uk",
         },
+
         {
           id: "thu_11",
           name: "Aperturas en máquina",
@@ -374,9 +406,10 @@ export const BASE_ROUTINES: Omit<Routine, "id" | "createdAt" | "updatedAt">[] =
           reps: "12-15",
           targetWeight: 0,
           unit: "kg",
-          restSeconds: 180,
+          restSeconds: 120,
           supersetId: "qt5s9uk",
         },
+
         {
           id: "thu_12",
           name: "Pájaros peck deck",
@@ -385,10 +418,11 @@ export const BASE_ROUTINES: Omit<Routine, "id" | "createdAt" | "updatedAt">[] =
           reps: "12-15",
           targetWeight: 0,
           unit: "kg",
-          restSeconds: 150,
+          restSeconds: 120,
         },
       ],
     },
+
     {
       name: "Viernes - Pierna + Posterior",
       dayOfWeek: 5,
@@ -401,8 +435,9 @@ export const BASE_ROUTINES: Omit<Routine, "id" | "createdAt" | "updatedAt">[] =
           reps: "12-15",
           targetWeight: 0,
           unit: "kg",
-          restSeconds: 150,
+          restSeconds: 120,
         },
+
         {
           id: "fri_03",
           name: "Sentadilla libre",
@@ -413,6 +448,7 @@ export const BASE_ROUTINES: Omit<Routine, "id" | "createdAt" | "updatedAt">[] =
           unit: "kg",
           restSeconds: 180,
         },
+
         {
           id: "fri_04",
           name: "Peso muerto rumano con mancuernas",
@@ -423,6 +459,7 @@ export const BASE_ROUTINES: Omit<Routine, "id" | "createdAt" | "updatedAt">[] =
           unit: "kg",
           restSeconds: 150,
         },
+
         {
           id: "fri_05",
           name: "Bulgara",
@@ -433,6 +470,7 @@ export const BASE_ROUTINES: Omit<Routine, "id" | "createdAt" | "updatedAt">[] =
           unit: "kg",
           restSeconds: 150,
         },
+
         {
           id: "fri_06",
           name: "Curl femoral acostado",
@@ -441,9 +479,10 @@ export const BASE_ROUTINES: Omit<Routine, "id" | "createdAt" | "updatedAt">[] =
           reps: "12-15",
           targetWeight: 0,
           unit: "kg",
-          restSeconds: 30,
+          restSeconds: 15,
           supersetId: "6f4qfrg",
         },
+
         {
           id: "fri_07",
           name: "Extensión cuádriceps",
@@ -452,9 +491,10 @@ export const BASE_ROUTINES: Omit<Routine, "id" | "createdAt" | "updatedAt">[] =
           reps: "12-15",
           targetWeight: 0,
           unit: "kg",
-          restSeconds: 180,
+          restSeconds: 120,
           supersetId: "6f4qfrg",
         },
+
         {
           id: "fri_02",
           name: "Abducción máquina",
@@ -463,9 +503,10 @@ export const BASE_ROUTINES: Omit<Routine, "id" | "createdAt" | "updatedAt">[] =
           reps: "12-15",
           targetWeight: 0,
           unit: "kg",
-          restSeconds: 30,
+          restSeconds: 15,
           supersetId: "p7icoh4",
         },
+
         {
           id: "fri_08",
           name: "Gemelo sentado",
@@ -474,9 +515,10 @@ export const BASE_ROUTINES: Omit<Routine, "id" | "createdAt" | "updatedAt">[] =
           reps: "12-15",
           targetWeight: 0,
           unit: "kg",
-          restSeconds: 180,
+          restSeconds: 120,
           supersetId: "p7icoh4",
         },
+
         {
           id: "fri_09",
           name: "Elevaciones piernas colgado ABS",
@@ -485,8 +527,9 @@ export const BASE_ROUTINES: Omit<Routine, "id" | "createdAt" | "updatedAt">[] =
           reps: "12-15",
           targetWeight: 0,
           unit: "kg",
-          restSeconds: 150,
+          restSeconds: 120,
         },
+
         {
           id: "fri_10",
           name: "Face pull pesado",
@@ -495,9 +538,10 @@ export const BASE_ROUTINES: Omit<Routine, "id" | "createdAt" | "updatedAt">[] =
           reps: "12-15",
           targetWeight: 0,
           unit: "kg",
-          restSeconds: 30,
+          restSeconds: 15,
           supersetId: "nsq9iqt",
         },
+
         {
           id: "fri_11",
           name: "Farmer walk pesado",
@@ -506,7 +550,7 @@ export const BASE_ROUTINES: Omit<Routine, "id" | "createdAt" | "updatedAt">[] =
           reps: "40m",
           targetWeight: 0,
           unit: "kg",
-          restSeconds: 180,
+          restSeconds: 120,
           supersetId: "nsq9iqt",
         },
       ],
