@@ -70,7 +70,7 @@ export const metadata: Metadata = {
       { url: "/icon.svg", type: "image/svg+xml" },
       { url: "/icon-192.svg", sizes: "192x192", type: "image/svg+xml" },
     ],
-    apple: [{ url: "/apple-icon.png", sizes: "180x180", type: "image/png" }],
+    apple: [{ url: "/icon.svg", sizes: "180x180", type: "image/svg+xml" }],
   },
 };
 
