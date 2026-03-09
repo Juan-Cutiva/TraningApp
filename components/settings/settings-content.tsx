@@ -28,7 +28,6 @@ import {
   Sun,
   Monitor,
   Timer,
-  Weight,
   AlertTriangle,
   Check,
   Loader2,
@@ -40,39 +39,50 @@ import {
   Dumbbell,
   TrendingUp,
   Plus,
+  Music2,
+  Music,
+  LogOut,
 } from "lucide-react";
 
 import { BASE_ROUTINES } from "@/lib/base-routines";
+import { useAuth } from "@/components/auth/auth-provider";
+import { AdminUsersPanel } from "./admin-users-panel";
+import { useSpotify } from "@/components/spotify/spotify-context";
 
 const DEFAULT_SETTINGS = {
   defaultRestSeconds: 150,
   theme: "dark" as const,
   bodyWeight: null as number | null,
   defaultUnit: "kg",
+  musicService: null as "spotify" | null,
+  musicEmbedUrl: "",
+  showMusicWidget: false,
 };
 
 export function SettingsContent() {
+  const { logout, isAdmin } = useAuth();
   const { theme, setTheme } = useTheme();
+  const { isConnected: spotifyConnected, connect: spotifyConnect, disconnect: spotifyDisconnect } = useSpotify();
   const [mounted, setMounted] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [exportStatus, setExportStatus] = useState<string | null>(null);
   const [importStatus, setImportStatus] = useState<string | null>(null);
   const [loadBaseStatus, setLoadBaseStatus] = useState<string | null>(null);
 
-  // Local state for body weight to allow empty values
-  const [bodyWeightInput, setBodyWeightInput] = useState<string>("");
+  // Local state for height
+  const [heightInput, setHeightInput] = useState<string>("");
 
   // Read-only query - NO writes allowed here
   const settings = useLiveQuery(() => db.userSettings.toCollection().first());
 
-  // Sync body weight input with settings
+  // Sync height with settings
   useEffect(() => {
-    if (settings?.bodyWeight !== null && settings?.bodyWeight !== undefined) {
-      setBodyWeightInput(String(settings.bodyWeight));
+    if (settings?.height !== null && settings?.height !== undefined) {
+      setHeightInput(String(settings.height));
     } else {
-      setBodyWeightInput("");
+      setHeightInput("");
     }
-  }, [settings?.bodyWeight]);
+  }, [settings?.height]);
 
   // Separate effect to seed default settings (write operation, outside liveQuery)
   useEffect(() => {
@@ -91,15 +101,14 @@ export function SettingsContent() {
     await db.userSettings.update(settings.id, { [field]: value });
   }
 
-  async function handleBodyWeightChange(value: string) {
-    setBodyWeightInput(value);
-    // Only save to DB if there's a valid number
+  async function handleHeightChange(value: string) {
+    setHeightInput(value);
     if (value === "") {
-      await updateSetting("bodyWeight", null);
+      await updateSetting("height", null);
     } else {
       const num = parseFloat(value);
-      if (!isNaN(num)) {
-        await updateSetting("bodyWeight", num);
+      if (!isNaN(num) && num > 0) {
+        await updateSetting("height", num);
       }
     }
   }
@@ -205,7 +214,7 @@ export function SettingsContent() {
       return;
     if (!confirm("¿Confirmar eliminación total de datos?")) return;
 
-    // Clear ALL tables in the database
+    // Clear all tables except users (preserve login credentials)
     await db.routines.clear();
     await db.workoutLogs.clear();
     await db.personalRecords.clear();
@@ -270,8 +279,14 @@ export function SettingsContent() {
         </CardHeader>
         <CardContent className="p-5 pt-0 flex flex-col gap-5">
           <div>
-            <Label className="text-sm font-medium flex items-center gap-2">
-              <Timer className="h-4 w-4 text-muted-foreground" />
+            <Label
+              htmlFor="default-rest"
+              className="text-sm font-medium flex items-center gap-2"
+            >
+              <Timer
+                className="h-4 w-4 text-muted-foreground"
+                aria-hidden="true"
+              />
               Descanso por defecto
             </Label>
             <Select
@@ -280,7 +295,7 @@ export function SettingsContent() {
                 updateSetting("defaultRestSeconds", parseInt(value))
               }
             >
-              <SelectTrigger className="mt-2 h-11">
+              <SelectTrigger id="default-rest" className="mt-2 h-11">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
@@ -295,22 +310,134 @@ export function SettingsContent() {
           </div>
           <div>
             <Label
-              htmlFor="body-weight"
+              htmlFor="default-unit"
               className="text-sm font-medium flex items-center gap-2"
             >
-              <Weight className="h-4 w-4 text-muted-foreground" />
-              Peso corporal (kg)
+              Unidad de peso por defecto
+            </Label>
+            <Select
+              value={settings?.defaultUnit ?? "kg"}
+              onValueChange={(value: string) =>
+                updateSetting("defaultUnit", value)
+              }
+            >
+              <SelectTrigger id="default-unit" className="mt-2 h-11">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="kg">Kilogramos (kg)</SelectItem>
+                <SelectItem value="lb">Libras (lb)</SelectItem>
+                <SelectItem value="otro">Otro</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+          <div>
+            <Label
+              htmlFor="height"
+              className="text-sm font-medium flex items-center gap-2"
+            >
+              <TrendingUp className="h-4 w-4 text-muted-foreground" />
+              Altura (cm)
             </Label>
             <Input
-              id="body-weight"
+              id="height"
               type="text"
               inputMode="decimal"
-              value={bodyWeightInput}
-              onChange={(e) => handleBodyWeightChange(e.target.value)}
-              placeholder="Opcional"
+              value={heightInput}
+              onChange={(e) => handleHeightChange(e.target.value)}
+              placeholder="Ej: 175"
               className="mt-2 h-11"
             />
+            <p className="text-xs text-muted-foreground mt-1">
+              Se usa para calcular el IMC en Peso Corporal
+            </p>
           </div>
+        </CardContent>
+      </Card>
+
+      {/* Music Widget */}
+      <Card className="mb-5">
+        <CardHeader className="p-5 pb-3">
+          <CardTitle className="text-base flex items-center gap-2">
+            <Music2 className="h-5 w-5 text-chart-4" />
+            Música en Entrenamiento
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="p-5 pt-0 flex flex-col gap-5">
+          <div>
+            <Label
+              htmlFor="music-service"
+              className="text-sm font-medium flex items-center gap-2"
+            >
+              <Music
+                className="h-4 w-4 text-muted-foreground"
+                aria-hidden="true"
+              />
+              Servicio de música
+            </Label>
+            <Select
+              value={settings?.musicService || "none"}
+              onValueChange={(value: string) =>
+                updateSetting("musicService", value === "none" ? null : value)
+              }
+            >
+              <SelectTrigger id="music-service" className="mt-2 h-11">
+                <SelectValue placeholder="Selecciona un servicio" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="none">Desactivado</SelectItem>
+                <SelectItem value="spotify">
+                  <div className="flex items-center gap-2">
+                    <svg
+                      viewBox="0 0 24 24"
+                      className="h-4 w-4"
+                      fill="currentColor"
+                      aria-hidden="true"
+                    >
+                      <path d="M12 0C5.4 0 0 5.4 0 12s5.4 12 12 12 12-5.4 12-12S18.66 0 12 0zm5.521 17.34c-.24.359-.66.48-1.021.24-2.82-1.74-6.36-2.101-10.561-1.141-.418.122-.779-.179-.899-.539-.12-.421.18-.78.54-.9 4.56-1.021 8.52-.6 11.64 1.32.42.18.479.659.301 1.02zm1.44-3.3c-.301.42-.841.6-1.262.3-3.239-1.98-8.159-2.58-11.939-1.38-.479.12-1.02-.12-1.14-.6-.12-.48.12-1.021.6-1.141C9.6 9.9 15 10.561 18.72 12.84c.361.181.54.78.241 1.2zm.12-3.36C15.24 8.4 8.82 8.16 5.16 9.301c-.6.179-1.2-.181-1.38-.721-.18-.601.18-1.2.72-1.381 4.26-1.26 11.28-1.02 15.721 1.621.539.3.719 1.02.419 1.56-.299.421-1.02.599-1.559.3z" />
+                    </svg>
+                    Spotify
+                  </div>
+                </SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+
+          {settings?.musicService === "spotify" && (
+            <div className="flex items-center justify-between gap-3 p-4 rounded-xl border bg-card">
+              <div className="flex items-center gap-3 min-w-0">
+                <div className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-xl ${spotifyConnected ? "bg-green-500/15" : "bg-muted"}`}>
+                  <svg viewBox="0 0 24 24" className={`h-5 w-5 ${spotifyConnected ? "text-green-500" : "text-muted-foreground"}`} fill="currentColor" aria-hidden="true">
+                    <path d="M12 0C5.4 0 0 5.4 0 12s5.4 12 12 12 12-5.4 12-12S18.66 0 12 0zm5.521 17.34c-.24.359-.66.48-1.021.24-2.82-1.74-6.36-2.101-10.561-1.141-.418.122-.779-.179-.899-.539-.12-.421.18-.78.54-.9 4.56-1.021 8.52-.6 11.64 1.32.42.18.479.659.301 1.02zm1.44-3.3c-.301.42-.841.6-1.262.3-3.239-1.98-8.159-2.58-11.939-1.38-.479.12-1.02-.12-1.14-.6-.12-.48.12-1.021.6-1.141C9.6 9.9 15 10.561 18.72 12.84c.361.181.54.78.241 1.2zm.12-3.36C15.24 8.4 8.82 8.16 5.16 9.301c-.6.179-1.2-.181-1.38-.721-.18-.601.18-1.2.72-1.381 4.26-1.26 11.28-1.02 15.721 1.621.539.3.719 1.02.419 1.56-.299.421-1.02.599-1.559.3z" />
+                  </svg>
+                </div>
+                <div className="min-w-0">
+                  <p className="text-sm font-semibold text-foreground">Spotify</p>
+                  <p className="text-xs text-muted-foreground">
+                    {spotifyConnected ? "Cuenta conectada" : "Sin conectar"}
+                  </p>
+                </div>
+              </div>
+              {spotifyConnected ? (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="shrink-0 text-destructive border-destructive/30 hover:bg-destructive/10"
+                  onClick={spotifyDisconnect}
+                >
+                  Desconectar
+                </Button>
+              ) : (
+                <Button
+                  size="sm"
+                  className="shrink-0 bg-green-500 hover:bg-green-600 text-white"
+                  onClick={spotifyConnect}
+                >
+                  Conectar
+                </Button>
+              )}
+            </div>
+          )}
         </CardContent>
       </Card>
 
@@ -361,6 +488,9 @@ export function SettingsContent() {
               ref={fileInputRef}
               type="file"
               accept=".json"
+              aria-label="Importar archivo de respaldo JSON"
+              title="Importar archivo de respaldo JSON"
+              tabIndex={-1}
               className="hidden"
               onChange={handleImport}
             />
@@ -575,6 +705,9 @@ export function SettingsContent() {
         </CardContent>
       </Card>
 
+      {/* Admin Panel — only visible to admin */}
+      {isAdmin && <AdminUsersPanel />}
+
       {/* Danger Zone */}
       <Card className="mb-5 border-destructive/30 bg-destructive/5">
         <CardHeader className="p-5 pb-3">
@@ -583,8 +716,8 @@ export function SettingsContent() {
             Zona de Peligro
           </CardTitle>
         </CardHeader>
-        <CardContent className="p-5 pt-0">
-          <p className="text-sm text-muted-foreground mb-4">
+        <CardContent className="p-5 pt-0 space-y-3">
+          <p className="text-sm text-muted-foreground">
             Eliminar todos los datos es irreversible. Asegúrate de tener un
             backup.
           </p>
@@ -595,6 +728,14 @@ export function SettingsContent() {
           >
             <AlertTriangle className="mr-2 h-4 w-4" />
             Eliminar todos los datos
+          </Button>
+          <Button
+            variant="outline"
+            className="w-full h-12 rounded-lg font-medium border-destructive/40 text-destructive hover:bg-destructive/10"
+            onClick={logout}
+          >
+            <LogOut className="mr-2 h-4 w-4" />
+            Cerrar sesión
           </Button>
         </CardContent>
       </Card>
@@ -610,7 +751,7 @@ export function SettingsContent() {
         <CardContent className="p-5 pt-0 space-y-4">
           <div className="space-y-3">
             <div className="flex items-start gap-3">
-              <div className="flex-shrink-0 w-6 h-6 rounded-full bg-primary/20 flex items-center justify-center text-xs font-bold text-primary">
+              <div className="shrink-0 w-6 h-6 rounded-full bg-primary/20 flex items-center justify-center text-xs font-bold text-primary">
                 1
               </div>
               <div className="text-sm">
@@ -619,13 +760,13 @@ export function SettingsContent() {
                 </p>
                 <p className="text-muted-foreground text-xs mt-1">
                   Busca el icono de 📱 o ⬇️ en la barra de direcciones y
-                  selecciona "Instalar Juan Traning"
+                  selecciona "Instalar Cuti Traning"
                 </p>
               </div>
             </div>
 
             <div className="flex items-start gap-3">
-              <div className="flex-shrink-0 w-6 h-6 rounded-full bg-primary/20 flex items-center justify-center text-xs font-bold text-primary">
+              <div className="shrink-0 w-6 h-6 rounded-full bg-primary/20 flex items-center justify-center text-xs font-bold text-primary">
                 2
               </div>
               <div className="text-sm">
@@ -638,7 +779,7 @@ export function SettingsContent() {
             </div>
 
             <div className="flex items-start gap-3">
-              <div className="flex-shrink-0 w-6 h-6 rounded-full bg-primary/20 flex items-center justify-center text-xs font-bold text-primary">
+              <div className="shrink-0 w-6 h-6 rounded-full bg-primary/20 flex items-center justify-center text-xs font-bold text-primary">
                 3
               </div>
               <div className="text-sm">
@@ -659,8 +800,8 @@ export function SettingsContent() {
 
       {/* App Info */}
       <div className="text-center pt-4">
-        <p className="text-sm font-semibold text-foreground">Juan Traning</p>
-        <p className="text-xs text-muted-foreground mt-1">Versión 1.0.0</p>
+        <p className="text-sm font-semibold text-foreground">Cuti Traning</p>
+        <p className="text-xs text-muted-foreground mt-1">Versión 0.3.0</p>
         <p className="text-xs text-muted-foreground mt-1">
           100% Offline • Tus datos en tu dispositivo
         </p>

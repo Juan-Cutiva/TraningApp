@@ -31,9 +31,9 @@ export interface WorkoutLog {
   startTime: Date;
   endTime: Date | null;
   duration: number; // seconds
-  totalVolume: number;
   completed: boolean;
   exercises: WorkoutExerciseLog[];
+  notes?: string;
 }
 
 export interface WorkoutExerciseLog {
@@ -82,7 +82,12 @@ export interface UserSettings {
   defaultRestSeconds: number;
   theme: "light" | "dark" | "system";
   bodyWeight: number | null;
+  height?: number | null; // height in cm for BMI
   defaultUnit: string;
+  // Music widget settings
+  musicService: "spotify" | "youtube" | null;
+  musicEmbedUrl: string;
+  showMusicWidget: boolean;
 }
 
 export interface BodyWeightEntry {
@@ -101,6 +106,13 @@ export interface WeightGoal {
   createdAt: Date;
 }
 
+export interface AppUser {
+  id?: number;
+  email: string;
+  passwordHash: string; // SHA-256 hex digest
+  createdAt: Date;
+}
+
 // --- Database ---
 
 class GymDB extends Dexie {
@@ -111,6 +123,7 @@ class GymDB extends Dexie {
   userSettings!: EntityTable<UserSettings, "id">;
   bodyWeight!: EntityTable<BodyWeightEntry, "id">;
   weightGoals!: EntityTable<WeightGoal, "id">;
+  users!: EntityTable<AppUser, "id">;
 
   constructor() {
     super("GymTrackerDB");
@@ -122,6 +135,16 @@ class GymDB extends Dexie {
       userSettings: "++id",
       bodyWeight: "++id, date",
       weightGoals: "++id, createdAt",
+    });
+    this.version(3).stores({
+      routines: "++id, name, dayOfWeek",
+      workoutLogs: "++id, routineId, date, completed",
+      personalRecords: "++id, exerciseName, type, date",
+      goals: "++id, type, completed",
+      userSettings: "++id",
+      bodyWeight: "++id, date",
+      weightGoals: "++id, createdAt",
+      users: "++id, &email",
     });
   }
 }
@@ -138,6 +161,9 @@ export async function getOrCreateSettings(): Promise<UserSettings> {
     theme: "dark",
     bodyWeight: null,
     defaultUnit: "kg",
+    musicService: null,
+    musicEmbedUrl: "",
+    showMusicWidget: false,
   });
   return (await db.userSettings.get(id))!;
 }
@@ -150,11 +176,13 @@ export async function getTodayRoutine(): Promise<Routine | undefined> {
 export async function getExerciseHistory(
   exerciseName: string,
 ): Promise<WorkoutExerciseLog[]> {
+  // orderBy + reverse() da DESC correcto; .reverse().sortBy() ignoraba el reverse
   const logs = await db.workoutLogs
     .where("completed")
     .equals(1)
-    .reverse()
-    .sortBy("date");
+    .toArray();
+  // Ordenar por fecha descendente (más reciente primero)
+  logs.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
   const history: WorkoutExerciseLog[] = [];
   for (const log of logs) {
     const ex = log.exercises.find((e) => e.exerciseName === exerciseName);
@@ -282,7 +310,8 @@ export function calculate1RM(
 
   // 2. Brzycki (1996) - Muy precisa para 6-10 repeticiones
   // Precisión: ±3% cuando las reps son entre 1-10
-  const brzycki = weight * (36 / (37 - repsNum));
+  // Cap at 36 to avoid divide-by-zero (denominator 37-reps would be 0 at reps=37)
+  const brzycki = weight * (36 / (37 - Math.min(repsNum, 36)));
 
   // 3. Lombardi (2010) - Alternativa moderna
   const lombardi = weight * Math.pow(repsNum, 0.1);
@@ -438,4 +467,37 @@ export async function checkAndUpdatePRs(
   }
 
   return newPRs;
+}
+
+/**
+ * Estimates total workout duration in seconds.
+ * Formula: per exercise = sets × execTimePerSet + (sets-1) × restSeconds
+ * + 60s transition between exercises.
+ * Supersets run in parallel (only counted once per group).
+ */
+export function estimateRoutineDuration(routine: Routine): number {
+  let totalSeconds = 0;
+  const seenSupersets = new Set<string>();
+
+  for (const ex of routine.exercises) {
+    // Skip repeated superset members — count the whole group once
+    if (ex.supersetId) {
+      if (seenSupersets.has(ex.supersetId)) continue;
+      seenSupersets.add(ex.supersetId);
+    }
+
+    const repsStr = ex.reps.toString();
+    const repsNum = parseInt(repsStr.match(/\d+/)?.[0] ?? "10", 10);
+
+    // Approximate time to execute one set (seconds)
+    const execPerSet =
+      repsNum <= 5 ? 25 : repsNum <= 10 ? 35 : repsNum <= 15 ? 50 : 70;
+
+    const rest = ex.restSeconds ?? 150;
+
+    // sets × exec + (sets-1) × rest + 60s transition
+    totalSeconds += ex.sets * execPerSet + (ex.sets - 1) * rest + 60;
+  }
+
+  return totalSeconds;
 }

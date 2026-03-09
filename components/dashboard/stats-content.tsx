@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useMemo } from "react";
+import { ErrorBoundary } from "@/components/error-boundary";
 import { useLiveQuery } from "dexie-react-hooks";
 import { db } from "@/lib/db";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -418,6 +419,7 @@ export function StatsContent() {
                 </CardTitle>
               </CardHeader>
               <CardContent className="p-4 pt-0">
+                <ErrorBoundary>
                 <ResponsiveContainer width="100%" height={200}>
                   <BarChart data={stats.durationByWorkout}>
                     <CartesianGrid
@@ -443,6 +445,7 @@ export function StatsContent() {
                     />
                   </BarChart>
                 </ResponsiveContainer>
+                </ErrorBoundary>
               </CardContent>
             </Card>
           )}
@@ -482,6 +485,7 @@ export function StatsContent() {
                   </CardTitle>
                 </CardHeader>
                 <CardContent className="p-4 pt-0">
+                  <ErrorBoundary>
                   <ResponsiveContainer width="100%" height={200}>
                     <LineChart data={stats.progressByExercise}>
                       <CartesianGrid
@@ -520,6 +524,7 @@ export function StatsContent() {
                       )}
                     </LineChart>
                   </ResponsiveContainer>
+                  </ErrorBoundary>
                 </CardContent>
               </Card>
             )}
@@ -558,6 +563,7 @@ export function StatsContent() {
                   </CardTitle>
                 </CardHeader>
                 <CardContent className="p-4 pt-0">
+                  <ErrorBoundary>
                   <ResponsiveContainer width="100%" height={250}>
                     <PieChart>
                       <Pie
@@ -588,6 +594,7 @@ export function StatsContent() {
                       />
                     </PieChart>
                   </ResponsiveContainer>
+                  </ErrorBoundary>
                 </CardContent>
               </Card>
 

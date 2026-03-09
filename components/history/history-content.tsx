@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import { useLiveQuery } from "dexie-react-hooks";
 import { db, calculate1RM } from "@/lib/db";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -9,6 +9,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   Sheet,
   SheetContent,
+  SheetDescription,
   SheetHeader,
   SheetTitle,
 } from "@/components/ui/sheet";
@@ -39,6 +40,7 @@ import {
   Dumbbell,
   TrendingUp,
   CalendarOff,
+  FileDown,
 } from "lucide-react";
 import {
   LineChart,
@@ -49,6 +51,7 @@ import {
   Tooltip,
   ResponsiveContainer,
 } from "recharts";
+import { ErrorBoundary } from "@/components/error-boundary";
 
 export function HistoryContent() {
   const [currentMonth, setCurrentMonth] = useState(new Date());
@@ -88,42 +91,188 @@ export function HistoryContent() {
     setSheetOpen(true);
   }
 
-  const exerciseChartData = selectedExercise
-    ? (allLogs
-        ?.filter((l) =>
-          l.exercises.some((e) => e.exerciseName === selectedExercise),
-        )
-        .reverse()
-        .map((l) => {
-          const ex = l.exercises.find(
-            (e) => e.exerciseName === selectedExercise,
-          );
-          const completedSets = ex?.sets.filter((s) => s.completed) ?? [];
-          const maxWeight =
-            completedSets.length > 0
-              ? Math.max(...completedSets.map((s) => s.weight))
-              : 0;
-          const bestSet =
-            completedSets.length > 0
-              ? completedSets.reduce(
-                  (best, s) => (s.weight > best.weight ? s : best),
-                  completedSets[0],
-                )
-              : null;
-          const bestWeight = bestSet?.weight ?? 0;
-          const bestReps = bestSet?.reps ?? 0;
-          const rm = calculate1RM(bestWeight, bestReps);
-          return {
-            date: format(new Date(l.date), "dd/MM"),
-            peso: maxWeight,
-            "1RM": rm.epley,
-          };
-        }) ?? [])
-    : [];
+  const exerciseChartData = useMemo(() => {
+    if (!selectedExercise || !allLogs) return [];
+    return allLogs
+      .filter((l) => l.exercises.some((e) => e.exerciseName === selectedExercise))
+      .slice()
+      .reverse()
+      .map((l) => {
+        const ex = l.exercises.find((e) => e.exerciseName === selectedExercise);
+        const completedSets = ex?.sets.filter((s) => s.completed) ?? [];
+        const maxWeight =
+          completedSets.length > 0
+            ? Math.max(...completedSets.map((s) => Number(s.weight) || 0))
+            : 0;
+        const bestSet =
+          completedSets.length > 0
+            ? completedSets.reduce(
+                (best, s) => (Number(s.weight) > Number(best.weight) ? s : best),
+                completedSets[0],
+              )
+            : null;
+        const bestWeight = Number(bestSet?.weight) || 0;
+        const bestReps = bestSet?.reps ?? 0;
+        const rm = calculate1RM(bestWeight, bestReps);
+        return {
+          date: format(new Date(l.date), "dd/MM"),
+          peso: maxWeight,
+          "1RM": rm.epley,
+        };
+      });
+  }, [allLogs, selectedExercise]);
+
+  async function exportPDF() {
+    if (!allLogs || allLogs.length === 0) return;
+    const { jsPDF } = await import("jspdf");
+    const doc = new jsPDF({ orientation: "portrait", unit: "mm", format: "a4" });
+
+    const pageW = 210;
+    const margin = 14;
+    const contentW = pageW - margin * 2;
+    let y = margin;
+
+    const COLOR_PRIMARY: [number, number, number] = [67, 97, 238];
+    const COLOR_DARK: [number, number, number] = [20, 20, 40];
+    const COLOR_GRAY: [number, number, number] = [100, 100, 120];
+    const COLOR_LIGHT: [number, number, number] = [240, 241, 248];
+    const COLOR_ROW_ALT: [number, number, number] = [248, 249, 255];
+
+    // ── Header ──────────────────────────────────────────────────────────────
+    doc.setFillColor(...COLOR_PRIMARY);
+    doc.rect(0, 0, pageW, 28, "F");
+    doc.setTextColor(255, 255, 255);
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(18);
+    doc.text("Cuti Traning", margin, 12);
+    doc.setFontSize(10);
+    doc.setFont("helvetica", "normal");
+    doc.text("Historial de Entrenamientos", margin, 19);
+    const exportDate = format(new Date(), "dd 'de' MMMM yyyy", { locale: es });
+    doc.text(`Exportado el ${exportDate}`, pageW - margin, 19, { align: "right" });
+    y = 36;
+
+    // ── Summary ──────────────────────────────────────────────────────────────
+    const totalDuration = allLogs.reduce((s, l) => s + l.duration, 0);
+    const totalSessions = allLogs.length;
+    const avgDuration = totalSessions > 0 ? totalDuration / totalSessions : 0;
+    const fmtMin = (s: number) => `${Math.round(s / 60)} min`;
+
+    doc.setFillColor(...COLOR_LIGHT);
+    doc.roundedRect(margin, y, contentW, 20, 3, 3, "F");
+    doc.setTextColor(...COLOR_DARK);
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(9);
+
+    const colW = contentW / 3;
+    [
+      ["Sesiones totales", String(totalSessions)],
+      ["Tiempo total", fmtMin(totalDuration)],
+      ["Promedio por sesión", fmtMin(avgDuration)],
+    ].forEach(([label, value], i) => {
+      const cx = margin + colW * i + colW / 2;
+      doc.setTextColor(...COLOR_GRAY);
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(7.5);
+      doc.text(label, cx, y + 7, { align: "center" });
+      doc.setTextColor(...COLOR_PRIMARY);
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(11);
+      doc.text(value, cx, y + 15, { align: "center" });
+    });
+    y += 28;
+
+    // ── Sessions ─────────────────────────────────────────────────────────────
+    const sorted = [...allLogs].sort(
+      (a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()
+    );
+
+    for (let idx = 0; idx < sorted.length; idx++) {
+      const log = sorted[idx];
+      const dateStr = format(new Date(log.date), "EEEE dd 'de' MMMM yyyy", { locale: es });
+      const completedExercises = log.exercises.filter((ex) =>
+        ex.sets.some((s) => s.completed)
+      );
+      const blockH = 14 + completedExercises.length * 7 + 6;
+
+      // Page break check
+      if (y + blockH > 282) {
+        doc.addPage();
+        y = margin;
+      }
+
+      // Session header bar
+      doc.setFillColor(...COLOR_PRIMARY);
+      doc.roundedRect(margin, y, contentW, 10, 2, 2, "F");
+      doc.setTextColor(255, 255, 255);
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(9);
+      doc.text(log.routineName, margin + 3, y + 6.5);
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(8);
+      doc.text(`${fmtMin(log.duration)}  ·  ${dateStr}`, pageW - margin - 3, y + 6.5, { align: "right" });
+      y += 11;
+
+      // Exercises
+      completedExercises.forEach((ex, ei) => {
+        const rowBg: [number, number, number] = ei % 2 === 0 ? COLOR_LIGHT : COLOR_ROW_ALT;
+        doc.setFillColor(...rowBg);
+        doc.rect(margin, y, contentW, 7, "F");
+
+        doc.setTextColor(...COLOR_DARK);
+        doc.setFont("helvetica", "bold");
+        doc.setFontSize(8);
+        doc.text(ex.exerciseName, margin + 3, y + 4.8);
+
+        const setsStr = ex.sets
+          .filter((s) => s.completed)
+          .map((s) => `${s.weight}${s.unit}×${s.reps}`)
+          .join("   ");
+        doc.setFont("helvetica", "normal");
+        doc.setTextColor(...COLOR_GRAY);
+        doc.setFontSize(7.5);
+        doc.text(setsStr, pageW - margin - 3, y + 4.8, { align: "right" });
+        y += 7;
+      });
+
+      if (log.notes) {
+        if (y + 8 > 282) { doc.addPage(); y = margin; }
+        doc.setFillColor(255, 248, 220);
+        doc.rect(margin, y, contentW, 7, "F");
+        doc.setTextColor(120, 100, 0);
+        doc.setFont("helvetica", "italic");
+        doc.setFontSize(7.5);
+        doc.text(`Nota: ${log.notes}`, margin + 3, y + 4.8);
+        y += 7;
+      }
+
+      y += 5; // gap between sessions
+    }
+
+    // ── Footer on last page ───────────────────────────────────────────────────
+    const pageCount = doc.getNumberOfPages();
+    for (let p = 1; p <= pageCount; p++) {
+      doc.setPage(p);
+      doc.setTextColor(...COLOR_GRAY);
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(7);
+      doc.text(`Página ${p} de ${pageCount}`, pageW / 2, 293, { align: "center" });
+    }
+
+    doc.save(`cuti-traning-historial-${format(new Date(), "yyyy-MM-dd")}.pdf`);
+  }
 
   return (
     <div className="mx-auto max-w-lg px-4 pt-6">
-      <h1 className="mb-6 text-2xl font-bold text-foreground">Historial</h1>
+      <div className="mb-6 flex items-center justify-between">
+        <h1 className="text-2xl font-bold text-foreground">Historial</h1>
+        {allLogs && allLogs.length > 0 && (
+          <Button variant="outline" size="sm" className="gap-2 h-9" onClick={exportPDF}>
+            <FileDown className="h-4 w-4" />
+            Exportar PDF
+          </Button>
+        )}
+      </div>
 
       <Tabs defaultValue="calendar">
         <TabsList className="w-full mb-4">
@@ -140,19 +289,25 @@ export function HistoryContent() {
             <Button
               variant="ghost"
               size="icon"
+              aria-label="Mes anterior"
               onClick={() => setCurrentMonth(subMonths(currentMonth, 1))}
             >
-              <ChevronLeft className="h-5 w-5" />
+              <ChevronLeft className="h-5 w-5" aria-hidden="true" />
             </Button>
-            <span className="font-semibold text-foreground capitalize">
+            <span
+              aria-live="polite"
+              aria-atomic="true"
+              className="font-semibold text-foreground capitalize"
+            >
               {format(currentMonth, "MMMM yyyy", { locale: es })}
             </span>
             <Button
               variant="ghost"
               size="icon"
+              aria-label="Mes siguiente"
               onClick={() => setCurrentMonth(addMonths(currentMonth, 1))}
             >
-              <ChevronRight className="h-5 w-5" />
+              <ChevronRight className="h-5 w-5" aria-hidden="true" />
             </Button>
           </div>
 
@@ -176,7 +331,9 @@ export function HistoryContent() {
               return (
                 <button
                   key={i}
+                  type="button"
                   onClick={() => handleDayClick(day)}
+                  aria-label={`${format(day, "EEEE dd 'de' MMMM", { locale: es })}${hasWorkout && isCurrentMonth ? ", entrenamiento registrado" : ""}${isSelected ? ", seleccionado" : ""}`}
                   className={`relative flex h-10 items-center justify-center rounded-lg text-sm transition-colors
                     ${!isCurrentMonth ? "text-muted-foreground/30" : "text-foreground"}
                     ${isToday && !isSelected ? "bg-primary/15 font-bold text-primary" : ""}
@@ -184,12 +341,12 @@ export function HistoryContent() {
                     ${isCurrentMonth && !isSelected ? "hover:bg-muted active:bg-muted/70" : ""}
                   `}
                 >
-                  {format(day, "d")}
+                  <span aria-hidden="true">{format(day, "d")}</span>
                   {hasWorkout && isCurrentMonth && !isSelected && (
-                    <span className="absolute bottom-1 h-1.5 w-1.5 rounded-full bg-primary" />
+                    <span className="absolute bottom-1 h-1.5 w-1.5 rounded-full bg-primary" aria-hidden="true" />
                   )}
                   {hasWorkout && isCurrentMonth && isSelected && (
-                    <span className="absolute bottom-1 h-1.5 w-1.5 rounded-full bg-primary-foreground" />
+                    <span className="absolute bottom-1 h-1.5 w-1.5 rounded-full bg-primary-foreground" aria-hidden="true" />
                   )}
                 </button>
               );
@@ -248,7 +405,12 @@ export function HistoryContent() {
               {allLogs?.slice(0, 10).map((log) => (
                 <Card
                   key={log.id}
-                  className="cursor-pointer hover:bg-muted/50 transition-all active:scale-[0.99] border-border/60"
+                  className="border-border/60"
+                >
+                <button
+                  type="button"
+                  className="w-full cursor-pointer hover:bg-muted/50 transition-all active:scale-[0.99] rounded-[inherit] text-left"
+                  aria-label={`Ver detalles de ${log.routineName}, ${format(new Date(log.date), "EEEE dd MMM", { locale: es })}`}
                   onClick={() => {
                     setSelectedDate(new Date(log.date));
                     setSheetOpen(true);
@@ -257,7 +419,7 @@ export function HistoryContent() {
                   <CardContent className="flex items-center justify-between p-4">
                     <div className="flex items-center gap-3">
                       <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-primary/10">
-                        <Dumbbell className="h-5 w-5 text-primary" />
+                        <Dumbbell className="h-5 w-5 text-primary" aria-hidden="true" />
                       </div>
                       <div>
                         <p className="font-semibold text-foreground">
@@ -277,6 +439,7 @@ export function HistoryContent() {
                       <p className="text-xs text-muted-foreground">duración</p>
                     </div>
                   </CardContent>
+                </button>
                 </Card>
               ))}
             </div>
@@ -311,6 +474,7 @@ export function HistoryContent() {
                   </CardTitle>
                 </CardHeader>
                 <CardContent className="p-4 pt-2">
+                  <ErrorBoundary>
                   <ResponsiveContainer width="100%" height={220}>
                     <LineChart data={exerciseChartData}>
                       <CartesianGrid
@@ -357,6 +521,7 @@ export function HistoryContent() {
                       />
                     </LineChart>
                   </ResponsiveContainer>
+                  </ErrorBoundary>
                 </CardContent>
               </Card>
 
@@ -385,7 +550,7 @@ export function HistoryContent() {
                 <p className="text-lg font-medium text-foreground">
                   Selecciona un ejercicio
                 </p>
-                <p className="text-sm text-muted-foreground mt-2 max-w-[250px]">
+                <p className="text-sm text-muted-foreground mt-2 max-w-62.5">
                   Elige un ejercicio para ver tu historial de peso y progreso
                   estimado de 1RM
                 </p>
@@ -408,6 +573,9 @@ export function HistoryContent() {
                   })
                 : ""}
             </SheetTitle>
+            <SheetDescription className="sr-only">
+              Detalle del entrenamiento del día seleccionado
+            </SheetDescription>
           </SheetHeader>
 
           <div className="px-4 pb-8">

@@ -21,8 +21,8 @@ interface PlateCalculatorProps {
 
 // Available plates in kg
 const PLATES_KG = [25, 20, 15, 10, 5, 2.5];
-// Available plates in lbs - removed 5
-const PLATES_LBS = [45, 35, 25, 15, 10];
+// Available plates in lbs
+const PLATES_LBS = [45, 35, 25, 15, 10, 2.5];
 
 // Conversion constants
 const KG_TO_LBS = 2.20462;
@@ -76,7 +76,7 @@ export function PlateCalculator({
 
   // Create display string for plates (e.g., "2×20 + 1×10")
   const platesDisplay = useMemo(() => {
-    if (platesNeeded.length === 0) return "Ninguno";
+    if (platesNeeded.length === 0) return "Solo barra";
     const parts: string[] = [];
     Object.entries(platesGrouped)
       .sort(([a], [b]) => Number(b) - Number(a))
@@ -108,7 +108,14 @@ export function PlateCalculator({
   const handleUnitChange = (newUnit: string) => {
     setUnit(newUnit);
     setBarWeight(newUnit === "kg" ? "20" : "45");
-    setTargetWeight("");
+    // Convert existing target weight to new unit
+    const current = parseFloat(targetWeight);
+    if (!isNaN(current) && current > 0) {
+      const converted = newUnit === "lbs"
+        ? (current * KG_TO_LBS).toFixed(1)
+        : (current * LBS_TO_KG).toFixed(1);
+      setTargetWeight(converted);
+    }
   };
 
   const conversionResult = useMemo(() => {
@@ -174,7 +181,7 @@ export function PlateCalculator({
 
           {/* Bar Weight */}
           <div className="flex items-center gap-2">
-            <label className="text-sm font-medium flex-shrink-0">Barra:</label>
+            <label className="text-sm font-medium shrink-0">Barra:</label>
             <div className="flex items-center gap-1 flex-1">
               <Input
                 type="text"
@@ -189,7 +196,7 @@ export function PlateCalculator({
 
           {/* Target Weight */}
           <div className="flex items-center gap-2">
-            <label className="text-sm font-medium flex-shrink-0">
+            <label className="text-sm font-medium shrink-0">
               Peso objetivo:
             </label>
             <div className="flex items-center gap-1 flex-1">
@@ -237,19 +244,19 @@ export function PlateCalculator({
 
                     {/* Left collar */}
                     <div
-                      className="h-6 bg-gradient-to-r from-slate-500 to-slate-400 rounded-sm"
+                      className="h-6 bg-linear-to-r from-slate-500 to-slate-400 rounded-sm"
                       style={{ width: "6px" }}
                     />
 
                     {/* Bar */}
                     <div
-                      className="h-3 bg-gradient-to-r from-slate-400 via-slate-300 to-slate-400 rounded-full"
+                      className="h-3 bg-linear-to-r from-slate-400 via-slate-300 to-slate-400 rounded-full"
                       style={{ width: "50px" }}
                     />
 
                     {/* Center collar */}
                     <div
-                      className="h-6 bg-gradient-to-r from-slate-500 to-slate-400 rounded-sm"
+                      className="h-6 bg-linear-to-r from-slate-500 to-slate-400 rounded-sm"
                       style={{ width: "6px" }}
                     />
 
@@ -390,6 +397,8 @@ function getPlateWidth(plate: number, unit: string): number {
         return 13;
       case 10:
         return 11;
+      case 2.5:
+        return 8;
       default:
         return 9;
     }
@@ -426,6 +435,8 @@ function getPlateHeight(plate: number, unit: string): number {
         return 45;
       case 10:
         return 35;
+      case 2.5:
+        return 25;
       default:
         return 28;
     }
@@ -451,7 +462,7 @@ function getPlateColor(plate: number, unit: string): string {
         return "#6b7280";
     }
   } else {
-    // LBS colors: 45 Azul Rey, 35 Amarillo, 25 Verde Claro, 15 Naranja Oscuro, 10 Gris
+    // LBS colors: 45 Azul Rey, 35 Amarillo, 25 Verde Claro, 15 Naranja Oscuro, 10 Gris, 2.5 Gris claro
     switch (plate) {
       case 45:
         return "#2563eb"; // Azul Rey
@@ -463,6 +474,8 @@ function getPlateColor(plate: number, unit: string): string {
         return "#ea580c"; // Naranja Oscuro
       case 10:
         return "#6b7280"; // Gris
+      case 2.5:
+        return "#9ca3af"; // Gris claro
       default:
         return "#6b7280";
     }
