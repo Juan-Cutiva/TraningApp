@@ -57,6 +57,7 @@ export function SpotifyPlayer({ compact = false }: SpotifyPlayerProps) {
   const {
     isConnected,
     isLoading,
+    isPremium,
     connect,
     disconnect,
     accessToken,
@@ -194,7 +195,8 @@ export function SpotifyPlayer({ compact = false }: SpotifyPlayerProps) {
 
   const handlePlayPause = async () => {
     if (isPlaying) {
-      await pause();
+      const deviceId = currentlyPlaying?.device?.id || currentDeviceId || undefined;
+      await pause(deviceId);
     } else if (currentlyPlaying?.item?.uri) {
       const deviceId = await getOrFetchDeviceId();
       if (deviceId) await play(deviceId, undefined, currentlyPlaying.item.uri);
@@ -203,7 +205,8 @@ export function SpotifyPlayer({ compact = false }: SpotifyPlayerProps) {
 
   const handleVolumeChange = async (value: number) => {
     setVolumeState(value);
-    await setVolume(value);
+    const deviceId = currentlyPlaying?.device?.id || currentDeviceId || undefined;
+    await setVolume(value, deviceId);
   };
 
   const filteredPlaylists = playlists.filter((p) =>
@@ -330,66 +333,103 @@ export function SpotifyPlayer({ compact = false }: SpotifyPlayerProps) {
                   </div>
                 </div>
 
-                <div className="flex items-center justify-center gap-2">
-                  <Button type="button" variant="ghost" size="icon" className="h-8 w-8" title="Anterior" onClick={previous}>
-                    <SkipBack className="h-4 w-4" />
-                  </Button>
-                  <Button
-                    type="button"
-                    onClick={handlePlayPause}
-                    title={isPlaying ? "Pausar" : "Reproducir"}
-                    className="h-10 w-10 rounded-full bg-[#1DB954] hover:bg-[#1ed760] text-black"
-                  >
-                    {isPlaying ? <Pause className="h-5 w-5" /> : <Play className="h-5 w-5 ml-0.5" />}
-                  </Button>
-                  <Button type="button" variant="ghost" size="icon" className="h-8 w-8" title="Siguiente" onClick={next}>
-                    <SkipForward className="h-4 w-4" />
-                  </Button>
-                </div>
+                {isPremium ? (
+                  <>
+                    <div className="flex items-center justify-center gap-2">
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon"
+                        className="h-8 w-8"
+                        title="Anterior"
+                        onClick={() => {
+                          const deviceId = currentlyPlaying?.device?.id || currentDeviceId || undefined;
+                          previous(deviceId);
+                        }}
+                      >
+                        <SkipBack className="h-4 w-4" />
+                      </Button>
+                      <Button
+                        type="button"
+                        onClick={handlePlayPause}
+                        title={isPlaying ? "Pausar" : "Reproducir"}
+                        className="h-10 w-10 rounded-full bg-[#1DB954] hover:bg-[#1ed760] text-black"
+                      >
+                        {isPlaying ? <Pause className="h-5 w-5" /> : <Play className="h-5 w-5 ml-0.5" />}
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon"
+                        className="h-8 w-8"
+                        title="Siguiente"
+                        onClick={() => {
+                          const deviceId = currentlyPlaying?.device?.id || currentDeviceId || undefined;
+                          next(deviceId);
+                        }}
+                      >
+                        <SkipForward className="h-4 w-4" />
+                      </Button>
+                    </div>
 
-                <div className="flex items-center gap-2">
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="icon"
-                    className="h-7 w-7 shrink-0"
-                    title={volume === 0 ? "Activar sonido" : "Silenciar"}
-                    onClick={() => handleVolumeChange(volume === 0 ? 50 : 0)}
-                  >
-                    {volume === 0 ? <VolumeX className="h-3 w-3" /> : <Volume2 className="h-3 w-3" />}
-                  </Button>
-                  <input
-                    type="range"
-                    min="0"
-                    max="100"
-                    value={volume}
-                    aria-label="Volumen"
-                    title="Volumen"
-                    onChange={(e) => handleVolumeChange(parseInt(e.target.value))}
-                    className="flex-1 h-1 accent-[#1DB954]"
-                  />
-                  <span className="text-xs text-muted-foreground w-7 shrink-0">{volume}%</span>
-                </div>
+                    <div className="flex items-center gap-2">
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon"
+                        className="h-7 w-7 shrink-0"
+                        title={volume === 0 ? "Activar sonido" : "Silenciar"}
+                        onClick={() => handleVolumeChange(volume === 0 ? 50 : 0)}
+                      >
+                        {volume === 0 ? <VolumeX className="h-3 w-3" /> : <Volume2 className="h-3 w-3" />}
+                      </Button>
+                      <input
+                        type="range"
+                        min="0"
+                        max="100"
+                        value={volume}
+                        aria-label="Volumen"
+                        title="Volumen"
+                        onChange={(e) => handleVolumeChange(parseInt(e.target.value))}
+                        className="flex-1 h-1 accent-[#1DB954]"
+                      />
+                      <span className="text-xs text-muted-foreground w-7 shrink-0">{volume}%</span>
+                    </div>
+                  </>
+                ) : (
+                  <div className="text-center py-1">
+                    <p className="text-xs text-muted-foreground">
+                      Los controles requieren{" "}
+                      <span className="text-[#1DB954] font-semibold">Spotify Premium</span>
+                    </p>
+                  </div>
+                )}
               </CardContent>
             ) : (
               <CardContent className="p-4 text-center">
                 <Music2 className="h-8 w-8 mx-auto mb-2 text-muted-foreground" />
                 <p className="text-sm text-muted-foreground mb-3">No hay reproducción activa</p>
-                <Button
-                  type="button"
-                  onClick={() => {
-                    fetchPlaylists();
-                    setViewingPlaylistId(null);
-                    setPlaylistTracks([]);
-                    setSearchQuery("");
-                    setShowPlaylistDialog(true);
-                  }}
-                  className="bg-[#1DB954] hover:bg-[#1ed760] text-black text-sm"
-                  size="sm"
-                >
-                  <ListMusic className="h-4 w-4 mr-2" />
-                  Elegir Playlist
-                </Button>
+                {isPremium ? (
+                  <Button
+                    type="button"
+                    onClick={() => {
+                      fetchPlaylists();
+                      setViewingPlaylistId(null);
+                      setPlaylistTracks([]);
+                      setSearchQuery("");
+                      setShowPlaylistDialog(true);
+                    }}
+                    className="bg-[#1DB954] hover:bg-[#1ed760] text-black text-sm"
+                    size="sm"
+                  >
+                    <ListMusic className="h-4 w-4 mr-2" />
+                    Elegir Playlist
+                  </Button>
+                ) : (
+                  <p className="text-xs text-muted-foreground">
+                    Abre Spotify en tu dispositivo para reproducir música
+                  </p>
+                )}
               </CardContent>
             )}
           </Card>

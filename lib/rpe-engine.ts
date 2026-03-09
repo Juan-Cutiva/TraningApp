@@ -1,16 +1,20 @@
 /**
- * RPE-based progression recommendation engine — v2
+ * RPE-based progression recommendation engine — v3
  *
  * Factors analysed:
  *  - Weighted RPE (last sets carry more weight — represent peak accumulated fatigue)
  *  - RPE fatigue trend across sets (escalation rate)
- *  - Actual reps performed vs target rep range (real completion quality)
+ *  - RPE variance (inconsistent effort = pacing problem)
+ *  - Actual reps performed vs TARGET rep range (real completion quality)
+ *  - At-top-of-range detection for double progression trigger
+ *  - Rep deficit detection (consistently missing target = too heavy regardless of RPE)
+ *  - Catastrophic fatigue jump (RPE spike > 3pts between consecutive sets)
  *  - Exercise category (compound / isolation / core / bodyweight)
  *  - Rep zone (strength 1-5 / hypertrophy 6-12 / endurance 13+)
  *  - Coverage ratio (won't recommend without sufficient RPE data)
  *  - Set count (more sets = higher accumulated fatigue = conservative adjustments)
  *  - Unit-aware increments (kg vs lbs, different for each zone and category)
- *  - Double progression model (reps first → weight second)
+ *  - Double progression model (reps first → weight second, properly gated by range position)
  */
 
 export type RPEValue = "easy" | "normal" | "hard" | "failure";
@@ -28,8 +32,10 @@ export type RecommendationType =
 export interface SetAnalysis {
   weight: number;
   unit: string;
-  /** Target reps string from routine: "10", "8-12", "AMRAP", etc. */
+  /** Actual reps the user performed this set */
   reps: string | number;
+  /** Target reps from the routine definition (e.g. "8-12", "10", "AMRAP") */
+  targetReps?: string | number;
   /** Undefined if user didn't rate this set */
   rpe?: RPEValue;
   completed: boolean;
@@ -144,7 +150,6 @@ function getIncrements(
         ? { micro: 2.5, small: 5, standard: 10, large: 15 }
         : { micro: 1.25, small: 2.5, standard: 5, large: 7.5 };
     }
-    // hypertrophy / endurance compound
     return lbs
       ? { micro: 2.5, small: 5, standard: 10, large: 15 }
       : { micro: 1.25, small: 2.5, standard: 5, large: 7.5 };
@@ -165,7 +170,6 @@ function getIncrements(
 /**
  * Weighted average RPE — later sets have more influence
  * (they reflect accumulated fatigue and true max effort)
- *
  * Weights: last set × 3, second-to-last × 2, all others × 1
  */
 function weightedAvgRpe(values: number[]): number {
@@ -184,9 +188,7 @@ function weightedAvgRpe(values: number[]): number {
 
 /**
  * Average delta between consecutive RPE values.
- * Positive = fatigue escalating (expected and healthy up to a point).
- * Large positive = unsustainable load.
- * Negative = getting easier (warm-up effect or weight too light).
+ * Positive = fatigue escalating. Large positive = unsustainable load.
  */
 function rpeTrend(values: number[]): number {
   if (values.length < 2) return 0;
@@ -195,6 +197,70 @@ function rpeTrend(values: number[]): number {
     sum += values[i] - values[i - 1];
   }
   return sum / (values.length - 1);
+}
+
+/**
+ * Standard deviation of RPE values.
+ * High variance (> 2.5) = inconsistent effort / pacing problem.
+ */
+function rpeStdDev(values: number[]): number {
+  if (values.length < 2) return 0;
+  const avg = values.reduce((a, b) => a + b, 0) / values.length;
+  return Math.sqrt(values.reduce((sum, v) => sum + (v - avg) ** 2, 0) / values.length);
+}
+
+/**
+ * Detects a catastrophic fatigue jump: any adjacent pair where RPE spikes > 3 pts.
+ * Example: easy (5.5) → failure (10.0) = jump of 4.5 → catastrophic.
+ */
+function hasCatastrophicJump(values: number[]): boolean {
+  for (let i = 1; i < values.length; i++) {
+    if (values[i] - values[i - 1] > 3) return true;
+  }
+  return false;
+}
+
+// ─── Rep completion helpers ───────────────────────────────────────────────────
+
+/** Parse actual reps from a set (handles string input) */
+function parseActualReps(reps: string | number): number {
+  return parseInt(String(reps), 10) || 0;
+}
+
+/**
+ * Fraction of completed sets that reached or exceeded the TOP of the target rep range.
+ * Used to trigger double-progression weight increase.
+ * Returns 0–1. >= 0.75 means "consistently at ceiling → ready to increase weight".
+ */
+function fractionAtTopOfRange(sets: SetAnalysis[], targetRange: RepRange): number {
+  if (sets.length === 0) return 0;
+  const atTop = sets.filter(s => parseActualReps(s.reps) >= targetRange.max);
+  return atTop.length / sets.length;
+}
+
+/**
+ * Fraction of completed sets that FAILED to reach the BOTTOM of the target rep range.
+ * If > 0.5, the weight is likely too heavy — user can't even start the range.
+ */
+function fractionBelowMinReps(sets: SetAnalysis[], targetRange: RepRange): number {
+  if (sets.length === 0) return 0;
+  // Fixed rep schemes: same min and max, so compare to min - 2 (allow 2-rep shortfall)
+  const threshold = targetRange.min === targetRange.max
+    ? Math.max(1, targetRange.min - 2)
+    : targetRange.min;
+  const below = sets.filter(s => parseActualReps(s.reps) < threshold);
+  return below.length / sets.length;
+}
+
+/**
+ * Average actual reps as a ratio of the target max.
+ * > 1.0 = consistently exceeding target (ready to increase weight or progress).
+ * < 0.8 = falling significantly short of target.
+ */
+function avgRepRatio(sets: SetAnalysis[], targetRange: RepRange): number {
+  if (sets.length === 0 || targetRange.max === 0) return 1;
+  const ratios = sets.map(s => parseActualReps(s.reps) / targetRange.max);
+  return ratios.reduce((a, b) => a + b, 0) / ratios.length;
 }
 
 // ─── Main recommendation function ────────────────────────────────────────────
@@ -218,39 +284,61 @@ export function getRPERecommendation(
   // ── Context ──────────────────────────────────────────────────────────────
   const category   = getCategory(muscleGroup, exerciseName);
   const unit       = completedSets[0]?.unit ?? "kg";
-  const repRange   = parseRepRange(completedSets[0]?.reps ?? "10");
-  const increments = getIncrements(category, unit, repRange.zone);
   const setCount   = completedSets.length;
+
+  // Rep range: prefer targetReps field (from routine), fall back to actual reps
+  const targetRepsSource = completedSets.find(s => s.targetReps)?.targetReps ?? completedSets[0]?.reps ?? "10";
+  const repRange   = parseRepRange(targetRepsSource);
+  const increments = getIncrements(category, unit, repRange.zone);
 
   // Bodyweight detection: all sets have weight === 0
   const isBodyweight = completedSets.every((s) => s.weight === 0);
 
   // ── RPE analysis ──────────────────────────────────────────────────────────
-  const rpeValues   = ratedSets.map((s) => RPE_NUMERIC[s.rpe!]);
-  const wAvgRpe     = weightedAvgRpe(rpeValues);
-  const simpleAvg   = rpeValues.reduce((a, b) => a + b, 0) / rpeValues.length;
-  const lastRpe     = RPE_NUMERIC[ratedSets[ratedSets.length - 1].rpe!];
-  const trend       = rpeTrend(rpeValues);
+  const rpeValues    = ratedSets.map((s) => RPE_NUMERIC[s.rpe!]);
+  const wAvgRpe      = weightedAvgRpe(rpeValues);
+  const simpleAvg    = rpeValues.reduce((a, b) => a + b, 0) / rpeValues.length;
+  const lastRpe      = RPE_NUMERIC[ratedSets[ratedSets.length - 1].rpe!];
+  const trend        = rpeTrend(rpeValues);
+  const stdDev       = rpeStdDev(rpeValues);
   const failureCount = ratedSets.filter((s) => s.rpe === "failure").length;
-  const hardOrFailure = ratedSets.filter((s) => s.rpe === "hard" || s.rpe === "failure").length;
+  const hardOrFail   = ratedSets.filter((s) => s.rpe === "hard" || s.rpe === "failure").length;
   const easyCount    = ratedSets.filter((s) => s.rpe === "easy").length;
 
-  // Dominant signal: use weighted average (emphasizes last set fatigue)
-  const dominantRpe = wAvgRpe;
-
-  // Escalation is dangerous if RPE jumps > 1.5 per set on average
-  const rapidEscalation = trend > 1.5;
-
-  // Last set finishing at failure is a strong signal regardless of average
-  const finishedAtFailure = lastRpe >= 10;
-
-  // Conservative flag: many sets + high fatigue = be more careful
-  const highVolume = setCount >= 4;
+  const dominantRpe        = wAvgRpe;
+  const rapidEscalation    = trend > 1.5;
+  const finishedAtFailure  = lastRpe >= 10;
+  const highVolume         = setCount >= 4;
+  const inconsistentPacing = stdDev > 2.5 && rpeValues.length >= 3;
+  const catastrophicJump   = hasCatastrophicJump(rpeValues);
 
   // ── Rep completion analysis ───────────────────────────────────────────────
-  // Parse the target reps from the first set (all sets share the same target)
-  // to check whether actual performance matches the prescription
-  const targetReps = repRange.max;
+  const topFraction   = fractionAtTopOfRange(completedSets, repRange);
+  const belowFraction = fractionBelowMinReps(completedSets, repRange);
+  const repRatio      = avgRepRatio(completedSets, repRange);
+
+  // Consistently hitting ceiling of rep range (≥75% sets at or above max target reps)
+  const atCeilingOfRange = topFraction >= 0.75;
+  // Fixed rep prescription (e.g., "10" not "8-12")
+  const fixedReps        = repRange.min === repRange.max;
+  // Significantly missing rep targets (>50% sets below minimum target)
+  const severeRepDeficit = belowFraction > 0.5 && repRange.min > 1;
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // EARLY EXIT: SEVERE REP DEFICIT
+  // If user is consistently failing to reach even the minimum of the rep range,
+  // the weight is objectively too heavy regardless of what they say about RPE.
+  // ─────────────────────────────────────────────────────────────────────────
+  if (severeRepDeficit && !isBodyweight && category !== "core") {
+    const shortfall = repRange.min - Math.round(repRatio * repRange.max);
+    return {
+      type: "decrease_weight_small",
+      weightDelta: -increments.small, repsDelta: 0,
+      headline: `Reduce ${increments.small} ${unit} — no alcanzas el rango objetivo`,
+      detail: `Completaste menos de ${repRange.min} reps en más de la mitad de las series (objetivo: ${repRange.min}–${repRange.max} reps). ${shortfall > 0 ? `Te faltan ~${shortfall} reps por serie.` : ""} Baja ${increments.small} ${unit} para poder trabajar dentro del rango.`,
+      color: "orange", emoji: "⚠️",
+    };
+  }
 
   // ─────────────────────────────────────────────────────────────────────────
   // BODYWEIGHT / CORE — weight-agnostic recommendations
@@ -279,7 +367,7 @@ export function getRPERecommendation(
         type: "maintain",
         weightDelta: 0, repsDelta: 0,
         headline: "Estímulo ideal — repite el mismo volumen",
-        detail: `RPE ${wAvgRpe.toFixed(1)} para ${muscleGroup}. Zona perfecta de hipertrofia. La próxima sesión intenta mejorar 1 rep por serie.`,
+        detail: `RPE ${wAvgRpe.toFixed(1)} para ${muscleGroup}. Zona perfecta. La próxima sesión intenta mejorar 1 rep por serie.`,
         color: "blue", emoji: "✅",
       };
     }
@@ -302,27 +390,57 @@ export function getRPERecommendation(
   }
 
   // ─────────────────────────────────────────────────────────────────────────
+  // CATASTROPHIC JUMP DETECTION
+  // If RPE spikes > 3 pts between any adjacent sets, weight selection is poor.
+  // ─────────────────────────────────────────────────────────────────────────
+  if (catastrophicJump && hardOrFail >= 2) {
+    return {
+      type: "decrease_weight_small",
+      weightDelta: -increments.small, repsDelta: 0,
+      headline: `Fatiga disparada — baja ${increments.small} ${unit}`,
+      detail: `Tu RPE se disparó bruscamente entre series (variación >3 pts). El peso puede ser correcto pero la distribución del esfuerzo es inconsistente. Baja ${increments.small} ${unit} y trabaja con esfuerzo más uniforme.`,
+      color: "orange", emoji: "⚠️",
+    };
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // INCONSISTENT PACING DETECTION
+  // High RPE std dev = effort varies wildly = pacing problem.
+  // ─────────────────────────────────────────────────────────────────────────
+  if (inconsistentPacing && dominantRpe >= 7 && dominantRpe <= 9) {
+    return {
+      type: "maintain",
+      weightDelta: 0, repsDelta: 0,
+      headline: "Mantén el peso — distribuye mejor el esfuerzo",
+      detail: `Tu RPE varía mucho entre series (desviación ${stdDev.toFixed(1)}). Indica un problema de ritmo: arrantas demasiado fuerte o muy suave. Mantén el mismo peso y enfócate en una intensidad consistente en todas las series.`,
+      color: "yellow", emoji: "⚡",
+    };
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────
   // DELOAD TRIGGER — fallo masivo en la sesión
   // ─────────────────────────────────────────────────────────────────────────
   const deloadThreshold = highVolume ? 0.5 : 0.6;
   if (failureCount >= Math.ceil(ratedSets.length * deloadThreshold) && dominantRpe >= 9.5) {
     const currentWeight = completedSets[0].weight || 0;
-    const deloadAmount  = Math.max(increments.standard, Math.round(currentWeight * 0.15 / (increments.small || 1.25)) * (increments.small || 1.25));
+    const deloadAmount  = Math.max(
+      increments.standard,
+      Math.round(currentWeight * 0.15 / (increments.small || 1.25)) * (increments.small || 1.25),
+    );
+    const cappedDeload = Math.min(deloadAmount, currentWeight * 0.20); // max 20% deload
     return {
       type: "deload",
-      weightDelta: -deloadAmount, repsDelta: 0,
-      headline: `Semana de descarga — baja ${deloadAmount} ${unit}`,
-      detail: `Fallo en ${failureCount} de ${ratedSets.length} series calificadas (RPE ponderado ${wAvgRpe.toFixed(1)}). ${muscleGroup} necesita recuperación. Reduce ~15% y trabaja con técnica perfecta.`,
+      weightDelta: -Math.round(cappedDeload * 4) / 4, repsDelta: 0,
+      headline: `Semana de descarga — baja ~${Math.round(cappedDeload * 4) / 4} ${unit}`,
+      detail: `Fallo en ${failureCount} de ${ratedSets.length} series calificadas (RPE ponderado ${wAvgRpe.toFixed(1)}). ${muscleGroup} necesita recuperación. Reduce ~15% y trabaja con técnica perfecta durante 1 semana.`,
       color: "red", emoji: "🔴",
     };
   }
 
   // ─────────────────────────────────────────────────────────────────────────
-  // STRENGTH ZONE (1–5 reps) — different progression model
-  // Strength training rarely uses rep ranges for progression; weight is king.
+  // STRENGTH ZONE (1–5 reps) — weight progression is primary lever
   // ─────────────────────────────────────────────────────────────────────────
   if (repRange.zone === "strength") {
-    // All sets easy/normal → ready to add weight
     if (dominantRpe < 7.0) {
       const jump = easyCount === ratedSets.length ? increments.standard : increments.small;
       return {
@@ -383,13 +501,33 @@ export function getRPERecommendation(
 
   // ─────────────────────────────────────────────────────────────────────────
   // HYPERTROPHY & ENDURANCE ZONES — double progression model
-  // Phase 1: Build to top of rep range at current weight
-  // Phase 2: Once at top of range with good RPE → increase weight
+  // Phase 1: Build toward top of rep range at current weight
+  // Phase 2: Once CONSISTENTLY at top of range with good RPE → increase weight
   // ─────────────────────────────────────────────────────────────────────────
 
   // ── ZONE: TOO EASY (wAvgRpe < 6.5) ────────────────────────────────────────
   if (dominantRpe < 6.5) {
-    // Everything easy — big increase
+    // At top of range + everything easy → bigger jump
+    if (atCeilingOfRange && easyCount === ratedSets.length && !rapidEscalation) {
+      return {
+        type: "increase_weight_large",
+        weightDelta: increments.large, repsDelta: 0,
+        headline: `+${increments.large} ${unit} — superaste el rango y estuvo fácil`,
+        detail: `Completaste ≥${repRange.max} reps en la mayoría de series con RPE ${simpleAvg.toFixed(1)} (fácil). Has superado claramente este peso. Sube ${increments.large} ${unit}.`,
+        color: "green", emoji: "🚀",
+      };
+    }
+    // At top of range but not all sets easy
+    if (atCeilingOfRange) {
+      return {
+        type: "increase_weight",
+        weightDelta: increments.standard, repsDelta: 0,
+        headline: `+${increments.standard} ${unit} — techo del rango alcanzado`,
+        detail: `Completaste el máximo de ${repRange.max} reps en la mayoría de series con RPE bajo. Listo para subir ${increments.standard} ${unit}.`,
+        color: "green", emoji: "⬆️",
+      };
+    }
+    // Everything easy but not at top → add reps before weight
     if (easyCount === ratedSets.length && !rapidEscalation) {
       return {
         type: "increase_weight_large",
@@ -399,7 +537,6 @@ export function getRPERecommendation(
         color: "green", emoji: "🚀",
       };
     }
-    // Mostly easy but some variation
     return {
       type: "increase_weight",
       weightDelta: increments.standard, repsDelta: 0,
@@ -411,72 +548,112 @@ export function getRPERecommendation(
 
   // ── ZONE: IDEAL (wAvgRpe 6.5–8.5) ─────────────────────────────────────────
   if (dominantRpe >= 6.5 && dominantRpe <= 8.5) {
-    // ─ HIGH COVERAGE: all sets rated — give most accurate recommendation
     const allSetsRated = ratedSets.length === completedSets.length;
 
-    // Rapid RPE escalation = weight might be slightly too heavy for the volume
-    if (rapidEscalation && highVolume && hardOrFailure >= 2) {
+    // Rapid RPE escalation with high volume = weight might be too heavy for this volume
+    if (rapidEscalation && highVolume && hardOrFail >= 2) {
       return {
         type: "maintain",
         weightDelta: 0, repsDelta: 0,
         headline: "Mantén el peso — fatiga acumulada alta",
-        detail: `RPE escala rápidamente (+${trend.toFixed(1)}/serie) con ${setCount} series. Perfecto estímulo. La próxima sesión trabaja hacia ${targetReps} reps con mejor distribución de esfuerzo.`,
+        detail: `RPE escala rápidamente (+${trend.toFixed(1)}/serie) con ${setCount} series. Perfecto estímulo. La próxima sesión trabaja hacia ${repRange.max} reps con mejor distribución de esfuerzo.`,
         color: "yellow", emoji: "⚡",
       };
     }
 
-    // Ideal zone with room to add reps (below or at target)
-    if (!rapidEscalation || rpeValues[rpeValues.length - 1] <= 8.5) {
-      // If this is a fixed-rep prescription (min === max), treat as top of range
-      const fixedReps = repRange.min === repRange.max;
-
-      if (fixedReps && allSetsRated && dominantRpe >= 6.5 && dominantRpe <= 7.5) {
-        // Fixed rep scheme, feeling easy-to-moderate → increase weight
-        return {
-          type: "increase_weight",
-          weightDelta: increments.standard, repsDelta: 0,
-          headline: `+${increments.standard} ${unit} — todas las reps completadas con margen`,
-          detail: `Completaste ${targetReps} reps en todas las series con RPE ${wAvgRpe.toFixed(1)}. Con prescripción fija, es momento de subir ${increments.standard} ${unit}.`,
-          color: "green", emoji: "🎯",
-        };
-      }
-
-      // Rep range prescription — double progression
-      if (allSetsRated && dominantRpe >= 7.5 && dominantRpe <= 8.5) {
-        // At ideal intensity with full data — standard weight increase
+    // ── KEY: At ceiling of range → trigger weight increase (double progression Phase 2)
+    if (atCeilingOfRange && dominantRpe >= 6.5 && dominantRpe <= 8.5) {
+      if (dominantRpe <= 7.5) {
+        // At ceiling and feeling easy-moderate → confident weight increase
         return {
           type: "increase_weight",
           weightDelta: increments.standard, repsDelta: 0,
           headline: `¡Progresión lista! +${increments.standard} ${unit}`,
-          detail: `RPE ideal (${wAvgRpe.toFixed(1)}) con cobertura completa. Completaste el trabajo con excelente intensidad. Sube ${increments.standard} ${unit} la próxima sesión.`,
+          detail: `Completaste ${repRange.max} reps en la mayoría de series con RPE ${wAvgRpe.toFixed(1)}. Has alcanzado el techo del rango (${repRange.min}–${repRange.max}) con margen. Sube ${increments.standard} ${unit} la próxima sesión.`,
           color: "green", emoji: "🎯",
         };
       }
+      // At ceiling but intensity is high — micro increase to be safe
+      if (category === "compound") {
+        return {
+          type: "increase_weight_small",
+          weightDelta: increments.micro, repsDelta: 0,
+          headline: `+${increments.micro} ${unit} — techo alcanzado con intensidad alta`,
+          detail: `Completaste el techo de ${repRange.max} reps pero con RPE ${wAvgRpe.toFixed(1)}. Sube ${increments.micro} ${unit} para continuar progresando con prudencia.`,
+          color: "green", emoji: "💪",
+        };
+      }
+      return {
+        type: "maintain",
+        weightDelta: 0, repsDelta: 0,
+        headline: "Mantén el peso — techo alcanzado con esfuerzo alto",
+        detail: `En ejercicio de aislamiento, alcanzar el techo con RPE ${wAvgRpe.toFixed(1)} indica que el estímulo es adecuado. Repite el mismo esquema la próxima sesión.`,
+        color: "blue", emoji: "✅",
+      };
+    }
 
-      // Good intensity — add reps before weight (double progression phase 1)
+    // ── Fixed rep prescription (e.g., "3x10") — at target with good RPE → increase
+    if (fixedReps && allSetsRated) {
+      if (dominantRpe >= 6.5 && dominantRpe <= 7.5) {
+        return {
+          type: "increase_weight",
+          weightDelta: increments.standard, repsDelta: 0,
+          headline: `+${increments.standard} ${unit} — todas las reps completadas con margen`,
+          detail: `Completaste ${repRange.min} reps en todas las series con RPE ${wAvgRpe.toFixed(1)}. Con prescripción fija es momento de subir ${increments.standard} ${unit}.`,
+          color: "green", emoji: "🎯",
+        };
+      }
+      if (dominantRpe > 7.5 && dominantRpe <= 8.5 && !rapidEscalation) {
+        return {
+          type: "increase_weight_small",
+          weightDelta: increments.micro, repsDelta: 0,
+          headline: `+${increments.micro} ${unit} — progresión mínima`,
+          detail: `Completaste la prescripción de ${repRange.min} reps con RPE ${wAvgRpe.toFixed(1)}. Sube ${increments.micro} ${unit} para mantener la sobrecarga progresiva.`,
+          color: "green", emoji: "💪",
+        };
+      }
+    }
+
+    // ── Rep range prescription (double progression Phase 1)
+    // Not at ceiling yet — build reps before weight
+    if (!rapidEscalation || rpeValues[rpeValues.length - 1] <= 8.5) {
+      const repsBeforeCeiling = repRange.max - Math.round(repRatio * repRange.max);
+      const repsText = repsBeforeCeiling > 1
+        ? `Aún te faltan ~${repsBeforeCeiling} reps para llegar al techo de ${repRange.max}.`
+        : `Estás cerca del techo (${repRange.max} reps).`;
+
       return {
         type: "maintain_increase_reps",
         weightDelta: 0, repsDelta: 1,
         headline: "Mantén el peso, busca 1 rep más por serie",
-        detail: `Zona óptima (RPE ${wAvgRpe.toFixed(1)}). ${allSetsRated ? "Datos completos." : "Califica más series para mayor precisión."} Acumula reps hacia ${targetReps} antes de subir peso.`,
+        detail: `Zona óptima (RPE ${wAvgRpe.toFixed(1)}). ${repsText} Cuando llegues a ${repRange.max} reps en todas las series con este esfuerzo, sube el peso.`,
         color: "blue", emoji: "📈",
       };
     }
 
-    // Safe fallback within ideal zone
     return {
       type: "maintain_increase_reps",
       weightDelta: 0, repsDelta: 1,
       headline: "Mantén la carga y acumula +1 rep",
-      detail: `Buen estímulo (RPE ${wAvgRpe.toFixed(1)}). Antes de subir peso, llega a ${targetReps} reps en todas las series con esta misma carga.`,
+      detail: `Buen estímulo (RPE ${wAvgRpe.toFixed(1)}). Antes de subir peso, llega a ${repRange.max} reps en todas las series con esta misma carga.`,
       color: "blue", emoji: "📊",
     };
   }
 
   // ── ZONE: HARD (wAvgRpe 8.5–9.5) ──────────────────────────────────────────
   if (dominantRpe > 8.5 && dominantRpe <= 9.5) {
+    // At ceiling even while hard — still warrants small increase for compound
+    if (atCeilingOfRange && !finishedAtFailure && category === "compound") {
+      return {
+        type: "increase_weight_small",
+        weightDelta: increments.micro, repsDelta: 0,
+        headline: `+${increments.micro} ${unit} — techo alcanzado aunque intenso`,
+        detail: `Completaste ${repRange.max} reps en la mayoría de series incluso con RPE ${wAvgRpe.toFixed(1)}. Eso demuestra adaptación. Sube ${increments.micro} ${unit} con precaución.`,
+        color: "green", emoji: "💪",
+      };
+    }
+
     if (!finishedAtFailure && !rapidEscalation) {
-      // Pushed hard but under control — micro increment for compound, maintain for isolation
       if (category === "compound") {
         return {
           type: "increase_weight_small",
@@ -524,7 +701,6 @@ export function getRPERecommendation(
       };
     }
 
-    // Hard with multiple failures in this zone
     return {
       type: "decrease_weight_small",
       weightDelta: -increments.small, repsDelta: 0,
@@ -545,7 +721,6 @@ export function getRPERecommendation(
     };
   }
 
-  // Single failure at end — near-maximal effort
   if (failureCount === 1) {
     return {
       type: "maintain",

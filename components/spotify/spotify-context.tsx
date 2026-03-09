@@ -7,6 +7,7 @@ import React, {
   useEffect,
   ReactNode,
 } from "react";
+import { toast } from "sonner";
 
 // Credenciales desde variables de entorno (sin client secret — flujo PKCE)
 const SPOTIFY_CLIENT_ID = process.env.NEXT_PUBLIC_SPOTIFY_CLIENT_ID ?? "";
@@ -54,6 +55,7 @@ function generateCodeVerifier(): string {
 interface SpotifyContextType {
   isConnected: boolean;
   isLoading: boolean;
+  isPremium: boolean;
   connect: () => Promise<void>;
   disconnect: () => void;
   accessToken: string | null;
@@ -66,10 +68,10 @@ interface SpotifyContextType {
     contextUri?: string,
     trackUri?: string,
   ) => Promise<void>;
-  pause: () => Promise<void>;
-  next: () => Promise<void>;
-  previous: () => Promise<void>;
-  setVolume: (volume: number) => Promise<void>;
+  pause: (deviceId?: string) => Promise<void>;
+  next: (deviceId?: string) => Promise<void>;
+  previous: (deviceId?: string) => Promise<void>;
+  setVolume: (volume: number, deviceId?: string) => Promise<void>;
 }
 
 interface SpotifyPlaylist {
@@ -98,10 +100,25 @@ const SpotifyContext = createContext<SpotifyContextType | undefined>(undefined);
 export function SpotifyProvider({ children }: { children: ReactNode }) {
   const [isConnected, setIsConnected] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
+  const [isPremium, setIsPremium] = useState(false);
   const [accessToken, setAccessToken] = useState<string | null>(null);
   const [playlists, setPlaylists] = useState<SpotifyPlaylist[]>([]);
   const [currentlyPlaying, setCurrentlyPlaying] =
     useState<SpotifyCurrentlyPlaying | null>(null);
+
+  const checkUserProfile = async (token: string) => {
+    try {
+      const res = await fetch("https://api.spotify.com/v1/me", {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setIsPremium(data.product === "premium");
+      }
+    } catch {
+      // ignore — premium defaults to false
+    }
+  };
 
   useEffect(() => {
     const checkToken = async () => {
@@ -112,6 +129,7 @@ export function SpotifyProvider({ children }: { children: ReactNode }) {
         if (Date.now() < parseInt(expires, 10)) {
           setAccessToken(token);
           setIsConnected(true);
+          await checkUserProfile(token);
         } else {
           // Token expirado — intentar refresh
           const refreshToken = localStorage.getItem("spotify_refresh_token");
@@ -162,6 +180,7 @@ export function SpotifyProvider({ children }: { children: ReactNode }) {
         }
         setAccessToken(data.access_token);
         setIsConnected(true);
+        await checkUserProfile(data.access_token);
       } else {
         throw new Error("No access token in response");
       }
@@ -170,6 +189,7 @@ export function SpotifyProvider({ children }: { children: ReactNode }) {
       clearSpotifyStorage();
       setIsConnected(false);
       setAccessToken(null);
+      setIsPremium(false);
     }
   };
 
@@ -177,8 +197,9 @@ export function SpotifyProvider({ children }: { children: ReactNode }) {
     const verifier = generateCodeVerifier();
     const challenge = await generateCodeChallenge(verifier);
 
-    // Guardar verifier en sessionStorage para recuperarlo en el callback
+    // Guardar verifier y ruta actual para volver al mismo sitio tras el callback
     sessionStorage.setItem("spotify_code_verifier", verifier);
+    sessionStorage.setItem("spotify_return_path", window.location.pathname);
 
     const scopes = [
       "user-read-private",
@@ -187,8 +208,6 @@ export function SpotifyProvider({ children }: { children: ReactNode }) {
       "user-modify-playback-state",
       "user-read-currently-playing",
       "playlist-read-private",
-      "streaming",
-      "app-remote-control",
     ].join(" ");
 
     const authUrl = new URL("https://accounts.spotify.com/authorize");
@@ -208,6 +227,7 @@ export function SpotifyProvider({ children }: { children: ReactNode }) {
     clearSpotifyStorage();
     setAccessToken(null);
     setIsConnected(false);
+    setIsPremium(false);
     setPlaylists([]);
     setCurrentlyPlaying(null);
   };
@@ -273,6 +293,15 @@ export function SpotifyProvider({ children }: { children: ReactNode }) {
     }
   };
 
+  function handlePlaybackError(status: number) {
+    if (status === 403) {
+      toast.error("Requiere Spotify Premium para controlar la reproducción");
+    } else if (status === 404) {
+      toast.warning("No hay dispositivo activo. Abre Spotify en tu dispositivo.");
+    }
+    // 502 y otros: silencioso
+  }
+
   const play = async (
     deviceId: string,
     contextUri?: string,
@@ -289,7 +318,7 @@ export function SpotifyProvider({ children }: { children: ReactNode }) {
         body.uris = [trackUri];
       }
 
-      await fetch(
+      const res = await fetch(
         `https://api.spotify.com/v1/me/player/play?device_id=${deviceId}`,
         {
           method: "PUT",
@@ -300,57 +329,71 @@ export function SpotifyProvider({ children }: { children: ReactNode }) {
           body: Object.keys(body).length > 0 ? JSON.stringify(body) : undefined,
         },
       );
+      if (!res.ok) handlePlaybackError(res.status);
     } catch (error) {
       console.error("Error playing:", error);
     }
   };
 
-  const pause = async () => {
+  const pause = async (deviceId?: string) => {
     if (!accessToken) return;
     try {
-      await fetch("https://api.spotify.com/v1/me/player/pause", {
+      const url = deviceId
+        ? `https://api.spotify.com/v1/me/player/pause?device_id=${deviceId}`
+        : "https://api.spotify.com/v1/me/player/pause";
+      const res = await fetch(url, {
         method: "PUT",
         headers: { Authorization: `Bearer ${accessToken}` },
       });
+      if (!res.ok) handlePlaybackError(res.status);
     } catch (error) {
       console.error("Error pausing:", error);
     }
   };
 
-  const next = async () => {
+  const next = async (deviceId?: string) => {
     if (!accessToken) return;
     try {
-      await fetch("https://api.spotify.com/v1/me/player/next", {
+      const url = deviceId
+        ? `https://api.spotify.com/v1/me/player/next?device_id=${deviceId}`
+        : "https://api.spotify.com/v1/me/player/next";
+      const res = await fetch(url, {
         method: "POST",
         headers: { Authorization: `Bearer ${accessToken}` },
       });
+      if (!res.ok) handlePlaybackError(res.status);
     } catch (error) {
       console.error("Error next track:", error);
     }
   };
 
-  const previous = async () => {
+  const previous = async (deviceId?: string) => {
     if (!accessToken) return;
     try {
-      await fetch("https://api.spotify.com/v1/me/player/previous", {
+      const url = deviceId
+        ? `https://api.spotify.com/v1/me/player/previous?device_id=${deviceId}`
+        : "https://api.spotify.com/v1/me/player/previous";
+      const res = await fetch(url, {
         method: "POST",
         headers: { Authorization: `Bearer ${accessToken}` },
       });
+      if (!res.ok) handlePlaybackError(res.status);
     } catch (error) {
       console.error("Error previous track:", error);
     }
   };
 
-  const setVolume = async (volume: number) => {
+  const setVolume = async (volume: number, deviceId?: string) => {
     if (!accessToken) return;
     try {
-      await fetch(
-        `https://api.spotify.com/v1/me/player/volume?volume_percent=${volume}`,
-        {
-          method: "PUT",
-          headers: { Authorization: `Bearer ${accessToken}` },
-        },
-      );
+      const url = deviceId
+        ? `https://api.spotify.com/v1/me/player/volume?volume_percent=${volume}&device_id=${deviceId}`
+        : `https://api.spotify.com/v1/me/player/volume?volume_percent=${volume}`;
+      const res = await fetch(url, {
+        method: "PUT",
+        headers: { Authorization: `Bearer ${accessToken}` },
+      });
+      if (!res.ok) handlePlaybackError(res.status);
     } catch (error) {
       console.error("Error setting volume:", error);
     }
@@ -361,6 +404,7 @@ export function SpotifyProvider({ children }: { children: ReactNode }) {
       value={{
         isConnected,
         isLoading,
+        isPremium,
         connect,
         disconnect,
         accessToken,

@@ -3,7 +3,7 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
-import { X, Plus, Minus, Timer, Pause, Play } from "lucide-react";
+import { X, Plus, Minus, Timer, Pause, Play, Minimize2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 interface RestTimerProps {
@@ -17,17 +17,15 @@ function playChime() {
     const ctx = new AudioContext();
     const now = ctx.currentTime;
 
-    // Vibrate device if supported
     if ("vibrate" in navigator) {
       navigator.vibrate([150, 80, 150, 80, 400]);
     }
 
-    // Ascending chord — four notes, higher gain for audibility
     const notes = [
-      { freq: 523.25, start: 0, end: 0.45 }, // C5
-      { freq: 659.25, start: 0.2, end: 0.65 }, // E5
-      { freq: 783.99, start: 0.4, end: 0.9 }, // G5
-      { freq: 1046.5, start: 0.65, end: 1.3 }, // C6
+      { freq: 523.25, start: 0, end: 0.45 },
+      { freq: 659.25, start: 0.2, end: 0.65 },
+      { freq: 783.99, start: 0.4, end: 0.9 },
+      { freq: 1046.5, start: 0.65, end: 1.3 },
     ];
 
     notes.forEach(({ freq, start, end }) => {
@@ -37,16 +35,13 @@ function playChime() {
       osc.frequency.value = freq;
       osc.connect(gain);
       gain.connect(ctx.destination);
-
       gain.gain.setValueAtTime(0, now + start);
       gain.gain.linearRampToValueAtTime(0.85, now + start + 0.05);
       gain.gain.exponentialRampToValueAtTime(0.001, now + end);
-
       osc.start(now + start);
       osc.stop(now + end + 0.05);
     });
 
-    // Short percussive accent at start for extra punch
     const accent = ctx.createOscillator();
     const accentGain = ctx.createGain();
     accent.type = "square";
@@ -62,21 +57,37 @@ function playChime() {
   }
 }
 
-export function RestTimer({
-  duration,
-  onChangeDuration,
-  onClose,
-}: RestTimerProps) {
+export function RestTimer({ duration, onChangeDuration, onClose }: RestTimerProps) {
   const [remaining, setRemaining] = useState(duration);
   const [finished, setFinished] = useState(false);
   const [paused, setPaused] = useState(false);
+  const [minimized, setMinimized] = useState(false);
+  const [pos, setPos] = useState<{ x: number; y: number } | null>(null);
+
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const hasPlayedSound = useRef(false);
   const prevDurationRef = useRef(duration);
-  // Ref para que el interval acceda a paused sin stale closure
   const pausedRef = useRef(false);
-  // Flag para que el useEffect de delta ignore el próximo cambio (reset por preset)
   const skipDeltaRef = useRef(false);
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  const drag = useRef<{
+    active: boolean;
+    startX: number;
+    startY: number;
+    origX: number;
+    origY: number;
+    moved: boolean;
+  } | null>(null);
+
+  // Set initial position client-side only
+  useEffect(() => {
+    const w = Math.min(window.innerWidth * 0.9, 280);
+    setPos({
+      x: Math.max(8, (window.innerWidth - w) / 2),
+      y: Math.max(8, window.innerHeight - 340),
+    });
+  }, []);
 
   const cleanup = useCallback(() => {
     if (intervalRef.current) {
@@ -85,15 +96,13 @@ export function RestTimer({
     }
   }, []);
 
-  // Mantener ref sincronizado con state
   useEffect(() => {
     pausedRef.current = paused;
   }, [paused]);
 
-  // Interval principal — ignora ticks cuando está pausado
   useEffect(() => {
     intervalRef.current = setInterval(() => {
-      if (pausedRef.current) return; // pausado: no contar
+      if (pausedRef.current) return;
       setRemaining((prev) => {
         if (prev <= 1) {
           cleanup();
@@ -103,12 +112,9 @@ export function RestTimer({
         return prev - 1;
       });
     }, 1000);
-
     return cleanup;
   }, [cleanup]);
 
-  // Sincronizar remaining cuando el usuario ajusta duration con +/-
-  // Si skipDeltaRef está activo (preset), se omite el delta y se respeta el remaining ya seteado
   useEffect(() => {
     const delta = duration - prevDurationRef.current;
     prevDurationRef.current = duration;
@@ -121,7 +127,6 @@ export function RestTimer({
     }
   }, [duration, finished]);
 
-  // Sonido al terminar
   useEffect(() => {
     if (finished && !hasPlayedSound.current) {
       hasPlayedSound.current = true;
@@ -129,7 +134,6 @@ export function RestTimer({
     }
   }, [finished]);
 
-  // Reset completo al presionar un preset — reinicia desde el tiempo elegido
   function handlePresetClick(presetSeconds: number) {
     skipDeltaRef.current = true;
     prevDurationRef.current = presetSeconds;
@@ -141,18 +145,122 @@ export function RestTimer({
     onChangeDuration(presetSeconds);
   }
 
+  // ── Drag handlers ──────────────────────────────────────────────────────
+  const handleDragStart = useCallback(
+    (e: React.PointerEvent<HTMLElement>) => {
+      e.preventDefault();
+      e.currentTarget.setPointerCapture(e.pointerId);
+      drag.current = {
+        active: true,
+        startX: e.clientX,
+        startY: e.clientY,
+        origX: pos?.x ?? 0,
+        origY: pos?.y ?? 0,
+        moved: false,
+      };
+    },
+    [pos],
+  );
+
+  const handleDragMove = useCallback((e: React.PointerEvent<HTMLElement>) => {
+    if (!drag.current?.active) return;
+    const dx = e.clientX - drag.current.startX;
+    const dy = e.clientY - drag.current.startY;
+    if (Math.abs(dx) > 4 || Math.abs(dy) > 4) drag.current.moved = true;
+    if (!drag.current.moved) return;
+    const el = containerRef.current;
+    const w = el?.offsetWidth ?? 280;
+    const h = el?.offsetHeight ?? 60;
+    setPos({
+      x: Math.max(0, Math.min(window.innerWidth - w, drag.current.origX + dx)),
+      y: Math.max(0, Math.min(window.innerHeight - h, drag.current.origY + dy)),
+    });
+  }, []);
+
+  // Returns true if gesture was a drag (not a tap)
+  const handleDragEnd = useCallback((): boolean => {
+    const moved = drag.current?.moved ?? false;
+    drag.current = null;
+    return moved;
+  }, []);
+
   const minutes = Math.floor(remaining / 60);
   const seconds = remaining % 60;
   const progress =
     duration > 0 ? ((duration - remaining) / duration) * 100 : 100;
 
-  // Compact vertical card — max 280px wide so it never overflows on mobile
-  return (
-    <div className="fixed bottom-32 left-1/2 -translate-x-1/2 z-90 w-[min(90vw,280px)]">
-      {/* Floating badge */}
+  // SSR guard
+  if (!pos) return null;
+
+  // ── Minimized pill ─────────────────────────────────────────────────────
+  if (minimized) {
+    return (
       <div
+        ref={containerRef}
+        style={{
+          position: "fixed",
+          left: pos.x,
+          top: pos.y,
+          zIndex: 90,
+          touchAction: "none",
+          userSelect: "none",
+        }}
+        onPointerDown={handleDragStart}
+        onPointerMove={handleDragMove}
+        onPointerUp={(e) => {
+          const wasDrag = handleDragEnd();
+          if (!wasDrag) setMinimized(false);
+        }}
+        className="cursor-grab active:cursor-grabbing"
+      >
+        <div
+          className={cn(
+            "flex items-center gap-2 pl-3 pr-3 py-2.5 rounded-2xl shadow-2xl border-2 font-mono font-bold select-none",
+            finished
+              ? "bg-green-500 border-green-400 text-white"
+              : paused
+                ? "bg-card border-yellow-500/60 text-yellow-500"
+                : "bg-primary border-primary/60 text-primary-foreground",
+          )}
+        >
+          <Timer
+            className={cn(
+              "h-4 w-4 shrink-0",
+              !finished && !paused && "animate-pulse",
+            )}
+          />
+          <span className="text-sm tabular-nums">
+            {minutes}:{seconds.toString().padStart(2, "0")}
+          </span>
+          {finished && (
+            <span className="text-[10px] ml-0.5">✓</span>
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  // ── Full timer ─────────────────────────────────────────────────────────
+  return (
+    <div
+      ref={containerRef}
+      style={{
+        position: "fixed",
+        left: pos.x,
+        top: pos.y,
+        zIndex: 90,
+        width: "min(90vw, 280px)",
+        touchAction: "none",
+        userSelect: "none",
+      }}
+    >
+      {/* Badge — drag handle */}
+      <div
+        onPointerDown={handleDragStart}
+        onPointerMove={handleDragMove}
+        onPointerUp={handleDragEnd}
         className={cn(
-          "absolute -top-3 left-1/2 -translate-x-1/2 flex items-center gap-1 px-3 py-1 text-[10px] font-bold rounded-full shadow-lg whitespace-nowrap z-100",
+          "absolute -top-3 left-1/2 -translate-x-1/2 flex items-center gap-1 px-3 py-1 text-[10px] font-bold rounded-full shadow-lg whitespace-nowrap z-[100] cursor-grab active:cursor-grabbing select-none",
           finished
             ? "bg-green-500 text-white animate-bounce"
             : paused
@@ -177,10 +285,13 @@ export function RestTimer({
               : "border-primary/30",
         )}
       >
-        {/* Header row: label + close */}
+        {/* Header — drag handle (buttons stop propagation) */}
         <div
+          onPointerDown={handleDragStart}
+          onPointerMove={handleDragMove}
+          onPointerUp={handleDragEnd}
           className={cn(
-            "flex items-center justify-between px-4 pt-4 pb-1",
+            "flex items-center justify-between px-4 pt-4 pb-1 cursor-grab active:cursor-grabbing",
             finished
               ? "bg-green-500/15"
               : paused
@@ -190,7 +301,7 @@ export function RestTimer({
         >
           <span
             className={cn(
-              "text-[11px] font-bold uppercase tracking-widest",
+              "text-[11px] font-bold uppercase tracking-widest pointer-events-none",
               finished
                 ? "text-green-400"
                 : paused
@@ -204,24 +315,40 @@ export function RestTimer({
                 ? "Pausado"
                 : "Tiempo de descanso"}
           </span>
-          <Button
-            variant="ghost"
-            size="icon"
-            onClick={onClose}
-            aria-label="Cerrar temporizador"
-            title="Cerrar temporizador"
-            className={cn(
-              "h-7 w-7 rounded-lg shrink-0",
-              finished
-                ? "text-green-400 hover:text-green-300"
-                : "text-muted-foreground",
-            )}
+          {/* Buttons — stop drag from starting when tapping them */}
+          <div
+            className="flex items-center gap-0.5"
+            onPointerDown={(e) => e.stopPropagation()}
           >
-            <X className="h-4 w-4" aria-hidden="true" />
-          </Button>
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={() => setMinimized(true)}
+              aria-label="Minimizar temporizador"
+              title="Minimizar"
+              className="h-7 w-7 rounded-lg text-muted-foreground hover:text-foreground"
+            >
+              <Minimize2 className="h-3.5 w-3.5" aria-hidden="true" />
+            </Button>
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={onClose}
+              aria-label="Cerrar temporizador"
+              title="Cerrar temporizador"
+              className={cn(
+                "h-7 w-7 rounded-lg shrink-0",
+                finished
+                  ? "text-green-400 hover:text-green-300"
+                  : "text-muted-foreground",
+              )}
+            >
+              <X className="h-4 w-4" aria-hidden="true" />
+            </Button>
+          </div>
         </div>
 
-        {/* Big time */}
+        {/* Big time display */}
         <div
           className={cn(
             "flex items-center justify-center py-3",
@@ -249,7 +376,10 @@ export function RestTimer({
         {/* Progress bar */}
         {!finished && (
           <div
-            className={cn("px-4 pb-3", paused ? "bg-yellow-500/10" : "bg-card")}
+            className={cn(
+              "px-4 pb-3",
+              paused ? "bg-yellow-500/10" : "bg-card",
+            )}
           >
             <Progress
               value={progress}
@@ -265,22 +395,23 @@ export function RestTimer({
               "flex items-center justify-center gap-1 px-4 pb-2",
               paused ? "bg-yellow-500/10" : "bg-card",
             )}
+            onPointerDown={(e) => e.stopPropagation()}
           >
             {[
-              { label: "1m", seconds: 60 },
-              { label: "1:30", seconds: 90 },
-              { label: "2m", seconds: 120 },
-              { label: "3m", seconds: 180 },
-              { label: "5m", seconds: 300 },
-            ].map(({ label, seconds }) => (
+              { label: "1m", secs: 60 },
+              { label: "1:30", secs: 90 },
+              { label: "2m", secs: 120 },
+              { label: "3m", secs: 180 },
+              { label: "5m", secs: 300 },
+            ].map(({ label, secs }) => (
               <Button
-                key={seconds}
+                key={secs}
                 type="button"
-                variant={duration === seconds ? "default" : "ghost"}
+                variant={duration === secs ? "default" : "ghost"}
                 size="sm"
                 aria-label={`Establecer descanso a ${label}`}
                 className="flex-1 h-7 text-[10px] font-semibold rounded-lg px-0"
-                onClick={() => handlePresetClick(seconds)}
+                onClick={() => handlePresetClick(secs)}
               >
                 {label}
               </Button>
@@ -298,6 +429,7 @@ export function RestTimer({
                 ? "bg-yellow-500/10"
                 : "bg-card",
           )}
+          onPointerDown={(e) => e.stopPropagation()}
         >
           {finished ? (
             <Button
@@ -322,9 +454,7 @@ export function RestTimer({
               <Button
                 variant="outline"
                 size="icon"
-                aria-label={
-                  paused ? "Reanudar temporizador" : "Pausar temporizador"
-                }
+                aria-label={paused ? "Reanudar temporizador" : "Pausar temporizador"}
                 className={cn(
                   "h-9 w-9 rounded-xl shrink-0",
                   paused
@@ -355,7 +485,7 @@ export function RestTimer({
         </div>
       </div>
 
-      {/* Accessibility: live region for screen readers */}
+      {/* Accessibility live region */}
       <div aria-live="assertive" aria-atomic="true" className="sr-only">
         {finished
           ? "Descanso terminado. ¡Listo para el siguiente ejercicio!"

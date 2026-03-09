@@ -86,8 +86,7 @@ export function WorkoutMode({ routineId }: { routineId: number }) {
   const [restKey, setRestKey] = useState(0);
   const [restDuration, setRestDuration] = useState(150);
   const [weightUpdated, setWeightUpdated] = useState(false);
-  const [newPRs, setNewPRs] = useState<string[]>([]);
-  const [showPR, setShowPR] = useState(false);
+
   const [finished, setFinished] = useState(false);
   const [notes, setNotes] = useState("");
   const [savedLogId, setSavedLogId] = useState<number | null>(null);
@@ -407,9 +406,22 @@ export function WorkoutMode({ routineId }: { routineId: number }) {
       exLog.muscleGroup,
     );
     if (prs.length > 0) {
-      setNewPRs(prs.map((p) => `${p.exerciseName}: ${p.details}`));
-      setShowPR(true);
-      setTimeout(() => setShowPR(false), 5000);
+      prs.forEach((p, i) => {
+        setTimeout(() => {
+          toast.custom(() => (
+            <div className="flex items-center gap-3 rounded-2xl border border-yellow-500/30 bg-card px-4 py-3 shadow-2xl">
+              <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-yellow-500/15">
+                <Trophy className="h-5 w-5 text-yellow-500" />
+              </div>
+              <div className="min-w-0">
+                <p className="text-[11px] font-bold uppercase tracking-wider text-yellow-500">¡Nuevo Récord!</p>
+                <p className="truncate text-sm font-semibold text-foreground">{p.exerciseName}</p>
+                <p className="text-xs text-muted-foreground">{p.details}</p>
+              </div>
+            </div>
+          ), { duration: 4500, position: "top-center" });
+        }, i * 600);
+      });
     }
 
     // Obtener duración de descanso para este ejercicio
@@ -432,9 +444,13 @@ export function WorkoutMode({ routineId }: { routineId: number }) {
 
     const weight = parseFloat(manualWeight) || 0;
 
+    // Determine which exercise to update: swapIndex for supersets, otherwise the only exercise
+    const targetFlatIndex =
+      swapIndex !== null ? swapIndex : currentGroup[0]?.index ?? 0;
+    const targetLog = exerciseLogs[targetFlatIndex];
+
     const updatedExercises = routine.exercises.map((ex) => {
-      const match = currentGroup.find((g) => g.log.exerciseId === ex.id);
-      if (match) {
+      if (ex.id === targetLog?.exerciseId) {
         return { ...ex, targetWeight: weight, unit: manualUnit };
       }
       return ex;
@@ -442,14 +458,16 @@ export function WorkoutMode({ routineId }: { routineId: number }) {
 
     await db.routines.update(routine.id!, { exercises: updatedExercises });
 
-    // Also update live exerciseLogs so unit change is immediately reflected
-    currentGroup.forEach(({ index: exIdx }) => {
-      setExerciseLogs((prev) => {
-        const updated = [...prev];
-        const sets = updated[exIdx].sets.map((s) => ({ ...s, unit: manualUnit }));
-        updated[exIdx] = { ...updated[exIdx], sets };
-        return updated;
-      });
+    // Update live exerciseLogs: only the selected exercise
+    setExerciseLogs((prev) => {
+      const updated = [...prev];
+      const sets = updated[targetFlatIndex].sets.map((s) => ({
+        ...s,
+        unit: manualUnit,
+        weight: s.completed ? s.weight : weight,
+      }));
+      updated[targetFlatIndex] = { ...updated[targetFlatIndex], sets };
+      return updated;
     });
 
     setWeightUpdated(true);
@@ -836,17 +854,6 @@ ${exerciseLines}
   // Active workout screen
   return (
     <div className="flex min-h-dvh flex-col bg-background">
-      {/* PR Notification */}
-      {showPR && newPRs.length > 0 && (
-        <div className="fixed inset-x-0 top-0 z-50 flex flex-col items-center gap-1 p-4">
-          {newPRs.map((pr, i) => (
-            <div key={i} className="flex items-center gap-2 rounded-xl bg-accent px-5 py-2.5 shadow-lg animate-in slide-in-from-top">
-              <Trophy className="h-4 w-4 text-accent-foreground shrink-0" />
-              <span className="font-bold text-accent-foreground text-sm">¡Nuevo Record! {pr}</span>
-            </div>
-          ))}
-        </div>
-      )}
 
       {/* Rest Timer Overlay */}
       {showRest && (
@@ -1077,7 +1084,14 @@ ${exerciseLines}
                         <Select
                           value={set.unit}
                           onValueChange={(val) =>
-                            updateSet(flatIndex, si, "unit", val)
+                            setExerciseLogs((prev) => {
+                              const updated = [...prev];
+                              updated[flatIndex] = {
+                                ...updated[flatIndex],
+                                sets: updated[flatIndex].sets.map((s) => ({ ...s, unit: val })),
+                              };
+                              return updated;
+                            })
                           }
                           disabled={isCompleted}
                         >
@@ -1090,6 +1104,7 @@ ${exerciseLines}
                           <SelectContent className="z-70">
                             <SelectItem value="kg">kg</SelectItem>
                             <SelectItem value="lb">lb</SelectItem>
+                            <SelectItem value="otro">otro</SelectItem>
                           </SelectContent>
                         </Select>
                       </div>
@@ -1164,10 +1179,16 @@ ${exerciseLines}
               {(() => {
                 const allDone = log.sets.every((s) => s.completed);
                 if (!allDone) return null;
+                // Find the matching routine exercise to get target reps
+                const routineExercise = routine.exercises.find(
+                  (ex) => ex.id === log.exerciseId,
+                );
                 const setsForEngine: SetAnalysis[] = log.sets.map((s) => ({
                   weight: s.weight === "" ? 0 : Number(s.weight),
                   unit: s.unit ?? "kg",
                   reps: s.reps,
+                  // Pass target reps from routine so the engine can compare actual vs target
+                  targetReps: routineExercise?.reps,
                   // Don't default RPE — undefined means user didn't rate this set
                   rpe: s.rpe as RPEValue | undefined,
                   completed: Boolean(s.completed),
@@ -1211,6 +1232,7 @@ ${exerciseLines}
                           }),
                         ),
                       );
+                      setSwapIndex(currentGroup[0]?.index ?? null);
                       setManualWeight(
                         maxWeightSingle > 0 ? maxWeightSingle.toString() : "",
                       );
@@ -1351,6 +1373,7 @@ ${exerciseLines}
                   <SelectContent className="z-70">
                     <SelectItem value="kg">kg</SelectItem>
                     <SelectItem value="lb">lb</SelectItem>
+                    <SelectItem value="otro">otro</SelectItem>
                   </SelectContent>
                 </Select>
               </div>

@@ -69,9 +69,11 @@ export default function CallbackContent() {
             "spotify_token_expires",
             String(Date.now() + data.expires_in * 1000),
           );
-          // Limpiar verifier de sesión
+          // Limpiar sesión y volver a donde estaba el usuario
           sessionStorage.removeItem("spotify_code_verifier");
-          router.push("/settings?spotify=connected");
+          const returnPath = sessionStorage.getItem("spotify_return_path") || "/settings";
+          sessionStorage.removeItem("spotify_return_path");
+          router.push(returnPath);
         } else {
           setError("Error al obtener token: respuesta inválida");
         }

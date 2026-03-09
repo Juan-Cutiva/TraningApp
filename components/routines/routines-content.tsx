@@ -419,18 +419,6 @@ export function RoutinesContent() {
               </div>
             ) : (
               routineHistory.map((log, i) => {
-                const vol = log.exercises.reduce(
-                  (sum, ex) =>
-                    sum +
-                    ex.sets
-                      .filter((s) => s.completed)
-                      .reduce(
-                        (s2, s) =>
-                          s2 + (Number(s.weight) || 0) * (Number(s.reps) || 0),
-                        0,
-                      ),
-                  0,
-                );
                 const mins = Math.round(log.duration / 60);
                 return (
                   <div
@@ -452,15 +440,6 @@ export function RoutinesContent() {
                         <Clock className="h-3 w-3" />
                         {mins} min
                       </span>
-                      {vol > 0 && (
-                        <span className="flex items-center gap-1">
-                          <BarChart3 className="h-3 w-3" />
-                          {vol >= 1000
-                            ? `${(vol / 1000).toFixed(1)}t`
-                            : `${vol.toFixed(0)} kg`}{" "}
-                          vol.
-                        </span>
-                      )}
                       <span>{log.exercises.length} ejercicios</span>
                     </div>
                     {log.notes && (
@@ -725,7 +704,7 @@ export function RoutinesContent() {
               </div>
               <div>
                 <Label className="text-xs text-muted-foreground">
-                  Peso ({exUnit})
+                  Peso
                 </Label>
                 <div className="flex mt-1 items-center gap-1">
                   <Input
@@ -733,9 +712,19 @@ export function RoutinesContent() {
                     inputMode="decimal"
                     value={exWeight}
                     onChange={(e) => setExWeight(e.target.value)}
-                    className="h-11"
+                    className="h-11 flex-1"
                     placeholder="0"
                   />
+                  <Select value={exUnit} onValueChange={setExUnit}>
+                    <SelectTrigger className="h-11 w-20 shrink-0">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="kg">kg</SelectItem>
+                      <SelectItem value="lb">lb</SelectItem>
+                      <SelectItem value="otro">otro</SelectItem>
+                    </SelectContent>
+                  </Select>
                 </div>
               </div>
             </div>

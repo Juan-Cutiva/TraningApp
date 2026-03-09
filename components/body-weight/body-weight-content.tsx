@@ -37,6 +37,7 @@ import {
   Tooltip,
   ResponsiveContainer,
   ReferenceLine,
+  Legend,
 } from "recharts";
 
 export function BodyWeightContent() {
@@ -154,14 +155,21 @@ export function BodyWeightContent() {
     }
   }
 
-  const chartData =
-    weightLogs
-      ?.slice()
-      .reverse()
-      .map((log: BodyWeightEntry) => ({
+  const chartData = (() => {
+    const raw = weightLogs?.slice().reverse() ?? [];
+    return raw.map((log: BodyWeightEntry, i: number) => {
+      // 7-entry moving average (by data point, not calendar days)
+      const windowStart = Math.max(0, i - 6);
+      const window = raw.slice(windowStart, i + 1);
+      const avg = window.reduce((s, l) => s + l.weight, 0) / window.length;
+      return {
         date: format(new Date(log.date), "dd/MM"),
         weight: log.weight,
-      })) ?? [];
+        // Show average only when we have at least 3 data points in window
+        avg7: window.length >= 3 ? Math.round(avg * 10) / 10 : undefined,
+      };
+    });
+  })();
 
   if (!mounted) {
     return (
@@ -329,7 +337,7 @@ export function BodyWeightContent() {
           </CardHeader>
           <CardContent className="p-4 pt-2">
             <ErrorBoundary>
-            <ResponsiveContainer width="100%" height={200}>
+            <ResponsiveContainer width="100%" height={220}>
               <LineChart data={chartData}>
                 <CartesianGrid
                   strokeDasharray="3 3"
@@ -357,21 +365,40 @@ export function BodyWeightContent() {
                     borderRadius: "12px",
                     fontSize: "12px",
                   }}
+                  formatter={(value: number, name: string) => [
+                    `${value} kg`,
+                    name === "avg7" ? "Media 7 días" : "Peso",
+                  ]}
+                />
+                <Legend
+                  formatter={(value) => value === "avg7" ? "Media 7 días" : "Peso diario"}
+                  wrapperStyle={{ fontSize: "11px", paddingTop: "8px" }}
                 />
                 {weightGoal && (
                   <ReferenceLine
                     y={weightGoal.targetWeight}
                     stroke="var(--color-chart-3)"
                     strokeDasharray="5 5"
+                    label={{ value: `Meta ${weightGoal.targetWeight}kg`, fontSize: 10, fill: "var(--color-chart-3)" }}
                   />
                 )}
                 <Line
                   type="monotone"
                   dataKey="weight"
                   stroke="var(--color-primary)"
-                  strokeWidth={3}
-                  dot={{ r: 4, fill: "var(--color-primary)" }}
-                  name="Peso"
+                  strokeWidth={2}
+                  dot={{ r: 3, fill: "var(--color-primary)" }}
+                  name="weight"
+                />
+                <Line
+                  type="monotone"
+                  dataKey="avg7"
+                  stroke="var(--color-chart-3)"
+                  strokeWidth={2.5}
+                  strokeDasharray="6 3"
+                  dot={false}
+                  name="avg7"
+                  connectNulls
                 />
               </LineChart>
             </ResponsiveContainer>
