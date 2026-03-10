@@ -42,11 +42,18 @@ export interface WorkoutExerciseLog {
   muscleGroup: string;
   supersetId?: string;
   sets: WorkoutSetLog[];
+  /** Recommendation from the RPE engine at end of this exercise (persisted for next session) */
+  lastRecommendation?: {
+    headline: string;
+    detail: string;
+    emoji: string;
+    color: string;
+  };
 }
 
 export interface WorkoutSetLog {
   setNumber: number;
-  weight: number | "";
+  weight: number | string;
   unit: string;
   reps: number | string;
   rpe?: "easy" | "normal" | "hard" | "failure"; // Made optional just in case
@@ -189,6 +196,14 @@ export async function getExerciseHistory(
     if (ex) history.push(ex);
   }
   return history;
+}
+
+export async function getLastRecommendation(
+  exerciseName: string,
+): Promise<WorkoutExerciseLog["lastRecommendation"] | undefined> {
+  const history = await getExerciseHistory(exerciseName);
+  if (history.length === 0) return undefined;
+  return history[0].lastRecommendation;
 }
 
 export async function getLastWeight(exerciseName: string): Promise<number> {

@@ -1,5 +1,9 @@
 /**
- * RPE-based progression recommendation engine — v3
+ * RPE-based progression recommendation engine — v4
+ *
+ * Based on: Schoenfeld 2017 (dose-response meta-analysis), Helms 2016 (RPE for
+ * resistance training), Zourdos 2016 (RPE-RIR relationship), Hackett 2018
+ * (muscle-size-dependent recovery), Ogasawara 2013 (detraining/retraining).
  *
  * Factors analysed:
  *  - Weighted RPE (last sets carry more weight — represent peak accumulated fatigue)
@@ -9,6 +13,12 @@
  *  - At-top-of-range detection for double progression trigger
  *  - Rep deficit detection (consistently missing target = too heavy regardless of RPE)
  *  - Catastrophic fatigue jump (RPE spike > 3pts between consecutive sets)
+ *  - **Failure position awareness** — early failure (set 1-2) is far more significant than
+ *    late failure (set 3+). Early failure = weight too heavy. Late failure = expected
+ *    accumulated fatigue (Helms 2016).
+ *  - **Muscle size tiering** — large muscles (chest, back, quads) tolerate bigger
+ *    increments and more failure volume than small muscles (biceps, triceps) or
+ *    medium muscles (shoulders, hamstrings). Based on Hackett 2018.
  *  - Exercise category (compound / isolation / core / bodyweight)
  *  - Rep zone (strength 1-5 / hypertrophy 6-12 / endurance 13+)
  *  - Coverage ratio (won't recommend without sufficient RPE data)
@@ -63,6 +73,17 @@ const RPE_NUMERIC: Record<RPEValue, number> = {
 // ─── Exercise categorization ─────────────────────────────────────────────────
 type ExerciseCategory = "compound" | "isolation" | "core";
 
+/**
+ * Muscle size tier — determines increment aggressiveness and failure tolerance.
+ * Based on Hackett 2018 (muscle-specific hypertrophy and recovery) and
+ * practical coaching consensus.
+ *
+ * - large: pecho, espalda, cuádriceps, glúteos — high capacity, bigger increments
+ * - medium: hombros, isquiotibiales, trapecio — moderate capacity
+ * - small: bíceps, tríceps, antebrazos, pantorrillas — fragile, conservative
+ */
+type MuscleSizeTier = "large" | "medium" | "small";
+
 const COMPOUND_MUSCLE_KEYWORDS = [
   "pecho", "espalda", "piernas", "glúteos", "gluteos",
   "cuádriceps", "cuadriceps", "isquiotibiales", "femoral",
@@ -87,6 +108,17 @@ const COMPOUND_EXERCISE_PATTERNS = [
   /clean/i, /snatch/i, /thruster/i, /sumo/i, /rumano/i, /rumana/i,
 ];
 
+// ── Muscle size keywords ──
+const LARGE_MUSCLE_KEYWORDS = [
+  "pecho", "espalda", "dorsales", "piernas",
+  "cuádriceps", "cuadriceps", "glúteos", "gluteos",
+];
+const MEDIUM_MUSCLE_KEYWORDS = [
+  "hombros", "trapecio", "isquiotibiales", "femoral",
+  "aductores", "abductores",
+];
+// Small = everything else (biceps, triceps, forearms, calves, rotator cuff)
+
 function getCategory(muscleGroup: string, exerciseName: string): ExerciseCategory {
   const muscle = muscleGroup.toLowerCase();
   const name   = exerciseName.toLowerCase();
@@ -97,6 +129,49 @@ function getCategory(muscleGroup: string, exerciseName: string): ExerciseCategor
   if (COMPOUND_EXERCISE_PATTERNS.some((p) => p.test(name))) return "compound";
 
   return "isolation"; // safe default
+}
+
+function getMuscleSizeTier(muscleGroup: string): MuscleSizeTier {
+  const muscle = muscleGroup.toLowerCase();
+  if (LARGE_MUSCLE_KEYWORDS.some((k) => muscle.includes(k))) return "large";
+  if (MEDIUM_MUSCLE_KEYWORDS.some((k) => muscle.includes(k))) return "medium";
+  return "small";
+}
+
+// ─── Failure position analysis ───────────────────────────────────────────────
+/**
+ * Analyses WHERE in the session failure occurred. Based on Helms 2016:
+ * - Failure in sets 1-2 with 3+ total sets → weight is objectively too heavy
+ * - Failure only in last set → normal accumulated fatigue, acceptable
+ * - Failure spread across middle sets → pacing/recovery issue
+ */
+interface FailureProfile {
+  /** Total failures */
+  count: number;
+  /** True if any failure in the first 2 sets (with 3+ total sets) */
+  earlyFailure: boolean;
+  /** True if failure ONLY in the last set */
+  onlyLastSetFailure: boolean;
+  /** Position of first failure (1-based) */
+  firstFailurePosition: number;
+  /** Ratio of total sets that are failures */
+  failureRate: number;
+}
+
+function analyzeFailurePosition(ratedSets: { rpe?: RPEValue }[]): FailureProfile {
+  const failureIndices: number[] = [];
+  ratedSets.forEach((s, i) => {
+    if (s.rpe === "failure") failureIndices.push(i);
+  });
+  const count = failureIndices.length;
+  const total = ratedSets.length;
+  return {
+    count,
+    earlyFailure: count > 0 && total >= 3 && failureIndices[0] < 2,
+    onlyLastSetFailure: count === 1 && failureIndices[0] === total - 1,
+    firstFailurePosition: count > 0 ? failureIndices[0] + 1 : 0,
+    failureRate: total > 0 ? count / total : 0,
+  };
 }
 
 // ─── Rep range ───────────────────────────────────────────────────────────────
@@ -135,30 +210,48 @@ function parseRepRange(repsStr: string | number): RepRange {
 }
 
 // ─── Increment tables ─────────────────────────────────────────────────────────
+// Now muscle-size-aware: large muscles get bigger jumps, small muscles get
+// conservative micro-progressions. Based on practical coaching data and
+// Hackett 2018 (muscle-specific adaptation rates).
 interface Increments { micro: number; small: number; standard: number; large: number; }
 
 function getIncrements(
   category: ExerciseCategory,
   unit: string,
   zone: RepRange["zone"],
+  muscleTier: MuscleSizeTier = "large",
 ): Increments {
   const lbs = unit === "lbs" || unit === "lb";
 
   if (category === "compound") {
-    if (zone === "strength") {
+    if (muscleTier === "large") {
+      // Pecho, espalda, cuádriceps, glúteos — full standard increments
       return lbs
         ? { micro: 2.5, small: 5, standard: 10, large: 15 }
         : { micro: 1.25, small: 2.5, standard: 5, large: 7.5 };
     }
+    if (muscleTier === "medium") {
+      // Hombros, isquiotibiales — reduced increments (~60-75% of large)
+      return lbs
+        ? { micro: 2.5, small: 2.5, standard: 5, large: 10 }
+        : { micro: 1.0, small: 1.25, standard: 2.5, large: 5 };
+    }
+    // Small muscle compound (rare, e.g. close-grip bench for triceps)
     return lbs
-      ? { micro: 2.5, small: 5, standard: 10, large: 15 }
-      : { micro: 1.25, small: 2.5, standard: 5, large: 7.5 };
+      ? { micro: 1.25, small: 2.5, standard: 5, large: 5 }
+      : { micro: 0.5, small: 1.25, standard: 2.5, large: 2.5 };
   }
 
   if (category === "isolation") {
+    if (muscleTier === "large" || muscleTier === "medium") {
+      return lbs
+        ? { micro: 1.25, small: 2.5, standard: 5, large: 5 }
+        : { micro: 0.5, small: 1.25, standard: 2.5, large: 2.5 };
+    }
+    // Small muscles (biceps, triceps, forearms, calves) — minimal increments
     return lbs
-      ? { micro: 1.25, small: 2.5, standard: 5, large: 5 }
-      : { micro: 0.5,  small: 1.25, standard: 2.5, large: 2.5 };
+      ? { micro: 1.25, small: 1.25, standard: 2.5, large: 2.5 }
+      : { micro: 0.5, small: 0.5, standard: 1.25, large: 1.25 };
   }
 
   // core — bodyweight dominant
@@ -283,13 +376,14 @@ export function getRPERecommendation(
 
   // ── Context ──────────────────────────────────────────────────────────────
   const category   = getCategory(muscleGroup, exerciseName);
+  const muscleTier = getMuscleSizeTier(muscleGroup);
   const unit       = completedSets[0]?.unit ?? "kg";
   const setCount   = completedSets.length;
 
   // Rep range: prefer targetReps field (from routine), fall back to actual reps
   const targetRepsSource = completedSets.find(s => s.targetReps)?.targetReps ?? completedSets[0]?.reps ?? "10";
   const repRange   = parseRepRange(targetRepsSource);
-  const increments = getIncrements(category, unit, repRange.zone);
+  const increments = getIncrements(category, unit, repRange.zone, muscleTier);
 
   // Bodyweight detection: all sets have weight === 0
   const isBodyweight = completedSets.every((s) => s.weight === 0);
@@ -311,6 +405,9 @@ export function getRPERecommendation(
   const highVolume         = setCount >= 4;
   const inconsistentPacing = stdDev > 2.5 && rpeValues.length >= 3;
   const catastrophicJump   = hasCatastrophicJump(rpeValues);
+
+  // ── Failure position analysis (v4) ──────────────────────────────────────
+  const fp = analyzeFailurePosition(ratedSets);
 
   // ── Rep completion analysis ───────────────────────────────────────────────
   const topFraction   = fractionAtTopOfRange(completedSets, repRange);
@@ -336,6 +433,23 @@ export function getRPERecommendation(
       weightDelta: -increments.small, repsDelta: 0,
       headline: `Reduce ${increments.small} ${unit} — no alcanzas el rango objetivo`,
       detail: `Completaste menos de ${repRange.min} reps en más de la mitad de las series (objetivo: ${repRange.min}–${repRange.max} reps). ${shortfall > 0 ? `Te faltan ~${shortfall} reps por serie.` : ""} Baja ${increments.small} ${unit} para poder trabajar dentro del rango.`,
+      color: "orange", emoji: "⚠️",
+    };
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // EARLY FAILURE — v4: failure in set 1 or 2 (with 3+ sets) means weight
+  // is objectively too heavy. Different from accumulated fatigue failure
+  // in the last set. Helms 2016: early RIR=0 indicates load exceeds capacity.
+  // ─────────────────────────────────────────────────────────────────────────
+  if (fp.earlyFailure && !isBodyweight && category !== "core") {
+    // Early failure = weight clearly too heavy — recommend meaningful decrease
+    const decreaseAmt = muscleTier === "small" ? increments.small : increments.standard;
+    return {
+      type: "decrease_weight",
+      weightDelta: -decreaseAmt, repsDelta: 0,
+      headline: `Reduce ${decreaseAmt} ${unit} — fallo temprano (serie ${fp.firstFailurePosition})`,
+      detail: `Llegaste al fallo en la serie ${fp.firstFailurePosition} de ${setCount}. Eso indica que el peso supera tu capacidad actual — no es fatiga acumulada, es exceso de carga. ${muscleTier === "small" ? `Para ${muscleGroup} (músculo pequeño) es especialmente importante no sobrecargar.` : `Baja ${decreaseAmt} ${unit} para poder completar las series con calidad.`}`,
       color: "orange", emoji: "⚠️",
     };
   }
@@ -420,7 +534,8 @@ export function getRPERecommendation(
   // ─────────────────────────────────────────────────────────────────────────
   // DELOAD TRIGGER — fallo masivo en la sesión
   // ─────────────────────────────────────────────────────────────────────────
-  const deloadThreshold = highVolume ? 0.5 : 0.6;
+  // Small muscles need deload with less failure volume (more fragile joints/tendons)
+  const deloadThreshold = muscleTier === "small" ? 0.4 : highVolume ? 0.5 : 0.6;
   if (failureCount >= Math.ceil(ratedSets.length * deloadThreshold) && dominantRpe >= 9.5) {
     const currentWeight = completedSets[0].weight || 0;
     const deloadAmount  = Math.max(
@@ -573,21 +688,31 @@ export function getRPERecommendation(
           color: "green", emoji: "🎯",
         };
       }
-      // At ceiling but intensity is high — micro increase to be safe
-      if (category === "compound") {
+      // At ceiling but intensity is high — muscle size determines response
+      if (muscleTier === "large") {
         return {
           type: "increase_weight_small",
           weightDelta: increments.micro, repsDelta: 0,
           headline: `+${increments.micro} ${unit} — techo alcanzado con intensidad alta`,
-          detail: `Completaste el techo de ${repRange.max} reps pero con RPE ${wAvgRpe.toFixed(1)}. Sube ${increments.micro} ${unit} para continuar progresando con prudencia.`,
+          detail: `Completaste el techo de ${repRange.max} reps con RPE ${wAvgRpe.toFixed(1)}. ${muscleGroup} (músculo grande) tolera la progresión. Sube ${increments.micro} ${unit}.`,
           color: "green", emoji: "💪",
         };
       }
+      if (muscleTier === "medium") {
+        return {
+          type: "increase_weight_small",
+          weightDelta: increments.micro, repsDelta: 0,
+          headline: `+${increments.micro} ${unit} — progresión prudente`,
+          detail: `Techo de ${repRange.max} reps con RPE ${wAvgRpe.toFixed(1)}. Para ${muscleGroup} sube solo ${increments.micro} ${unit} — los músculos medianos progresan más lento.`,
+          color: "green", emoji: "💪",
+        };
+      }
+      // Small muscles — don't increase at high RPE, consolidate
       return {
         type: "maintain",
         weightDelta: 0, repsDelta: 0,
-        headline: "Mantén el peso — techo alcanzado con esfuerzo alto",
-        detail: `En ejercicio de aislamiento, alcanzar el techo con RPE ${wAvgRpe.toFixed(1)} indica que el estímulo es adecuado. Repite el mismo esquema la próxima sesión.`,
+        headline: "Mantén el peso — techo con esfuerzo alto",
+        detail: `Alcanzaste ${repRange.max} reps con RPE ${wAvgRpe.toFixed(1)} en ${muscleGroup} (músculo pequeño). Consolida este peso antes de subir — los músculos pequeños necesitan más adaptación entre incrementos.`,
         color: "blue", emoji: "✅",
       };
     }
@@ -654,20 +779,21 @@ export function getRPERecommendation(
     }
 
     if (!finishedAtFailure && !rapidEscalation) {
-      if (category === "compound") {
+      // v4: Only large/medium muscles can progress at high RPE
+      if (muscleTier === "large" || (muscleTier === "medium" && category === "compound")) {
         return {
           type: "increase_weight_small",
           weightDelta: increments.micro, repsDelta: 0,
           headline: `Esfuerzo al límite. +${increments.micro} ${unit}`,
-          detail: `Series muy duras (RPE ${wAvgRpe.toFixed(1)}) sin fallo y sin escalada rápida. Excelente calidad. Prueba +${increments.micro} ${unit} la próxima sesión.`,
+          detail: `Series muy duras (RPE ${wAvgRpe.toFixed(1)}) sin fallo y sin escalada rápida. ${muscleTier === "large" ? `${muscleGroup} aguanta la progresión.` : `Progresión mínima para ${muscleGroup}.`} Prueba +${increments.micro} ${unit}.`,
           color: "green", emoji: "💪",
         };
       }
       return {
         type: "maintain",
         weightDelta: 0, repsDelta: 0,
-        headline: "Mantén el peso — límite de intensidad para aislamiento",
-        detail: `Alta intensidad (RPE ${wAvgRpe.toFixed(1)}) en ejercicio de aislamiento. Consolida este peso antes de incrementar para proteger articulaciones y tendones.`,
+        headline: "Mantén el peso — límite para este músculo",
+        detail: `Alta intensidad (RPE ${wAvgRpe.toFixed(1)}) en ${muscleGroup}${muscleTier === "small" ? " (músculo pequeño)" : ""}. Consolida este peso — los músculos más pequeños necesitan más tiempo para adaptar tendones y articulaciones.`,
         color: "yellow", emoji: "⚡",
       };
     }
@@ -683,20 +809,22 @@ export function getRPERecommendation(
     }
 
     if (finishedAtFailure && failureCount === 1) {
-      if (category === "compound") {
+      // v4: Last-set-only failure — normal accumulated fatigue for large/medium muscles
+      if (fp.onlyLastSetFailure && (muscleTier === "large" || muscleTier === "medium")) {
         return {
           type: "maintain",
           weightDelta: 0, repsDelta: 0,
           headline: "Buen trabajo — mantén el peso",
-          detail: `Fallo solo en la última serie para ${muscleGroup}. Indica reclutamiento máximo. Repite el mismo peso e intenta completarla la próxima sesión.`,
+          detail: `Fallo solo en la última serie para ${muscleGroup}. Es fatiga acumulada normal${muscleTier === "large" ? " en un músculo grande" : ""}. Repite el mismo peso e intenta completar esa última serie la próxima sesión.`,
           color: "yellow", emoji: "⚡",
         };
       }
+      // Small muscles or non-last-set failure — more conservative
       return {
         type: "decrease_weight_small",
         weightDelta: -increments.small, repsDelta: 0,
-        headline: `Baja ${increments.small} ${unit} — fallo en última serie de aislamiento`,
-        detail: `En aislamiento el fallo aumenta riesgo de lesión. Baja ${increments.small} ${unit} y trabaja con control total del recorrido.`,
+        headline: `Baja ${increments.small} ${unit} — fallo en ${muscleTier === "small" ? "músculo pequeño" : "serie intermedia"}`,
+        detail: `${muscleTier === "small" ? `Para ${muscleGroup} (músculo pequeño), el fallo aumenta riesgo en tendones y articulaciones.` : `El fallo no fue en la última serie, lo que indica que el peso puede ser excesivo.`} Baja ${increments.small} ${unit} y trabaja con control total.`,
         color: "orange", emoji: "⚠️",
       };
     }
@@ -712,22 +840,34 @@ export function getRPERecommendation(
 
   // ── ZONE: FAILURE / NEAR FAILURE (wAvgRpe > 9.5) ──────────────────────────
   if (failureCount >= 2) {
+    // v4: Multiple failures — scale response by muscle size
+    const decreaseAmt = muscleTier === "small" ? increments.small : increments.standard;
     return {
       type: "decrease_weight",
-      weightDelta: -increments.standard, repsDelta: 0,
-      headline: `Reduce ${increments.standard} ${unit} — peso excesivo`,
-      detail: `Fallo en ${failureCount}/${ratedSets.length} series (RPE ${wAvgRpe.toFixed(1)}). Este peso supera tu capacidad de trabajo actual. Baja ${increments.standard} ${unit} y reconstruye con buena técnica.`,
+      weightDelta: -decreaseAmt, repsDelta: 0,
+      headline: `Reduce ${decreaseAmt} ${unit} — peso excesivo`,
+      detail: `Fallo en ${failureCount}/${ratedSets.length} series (RPE ${wAvgRpe.toFixed(1)}).${fp.earlyFailure ? ` Primer fallo en serie ${fp.firstFailurePosition} — la carga es demasiado alta.` : ""} ${muscleTier === "small" ? `Para ${muscleGroup} baja ${decreaseAmt} ${unit} (progresión conservadora).` : `Baja ${decreaseAmt} ${unit} y reconstruye con buena técnica.`}`,
       color: "red", emoji: "🔽",
     };
   }
 
   if (failureCount === 1) {
+    // v4: single failure at high RPE — last set vs earlier matters
+    if (fp.onlyLastSetFailure) {
+      return {
+        type: "maintain",
+        weightDelta: 0, repsDelta: 0,
+        headline: "Mantén el peso — fallo solo en última serie",
+        detail: `Fallo en la última serie con RPE global ${wAvgRpe.toFixed(1)}. Es fatiga acumulada normal. Repite el peso, descansa bien y mejora la nutrición post-entreno.`,
+        color: "yellow", emoji: "💛",
+      };
+    }
     return {
-      type: "maintain",
-      weightDelta: 0, repsDelta: 0,
-      headline: "Mantén el peso — esfuerzo casi máximo",
-      detail: `Una serie al fallo con RPE global muy alto (${wAvgRpe.toFixed(1)}). Sesión muy exigente. Repite el peso, descansa bien y mejora la nutrición post-entreno.`,
-      color: "yellow", emoji: "💛",
+      type: "decrease_weight_small",
+      weightDelta: -increments.small, repsDelta: 0,
+      headline: `Baja ${increments.small} ${unit} — fallo en serie ${fp.firstFailurePosition}`,
+      detail: `Fallo en la serie ${fp.firstFailurePosition} de ${setCount} (no la última). Eso indica carga excesiva, no fatiga normal. Baja ${increments.small} ${unit}.`,
+      color: "orange", emoji: "⚠️",
     };
   }
 

@@ -5,6 +5,7 @@ import { useLiveQuery } from "dexie-react-hooks";
 import {
   db,
   getLastWeight,
+  getLastRecommendation,
   checkAndUpdatePRs,
   type WorkoutExerciseLog,
   type WorkoutSetLog,
@@ -112,6 +113,9 @@ export function WorkoutMode({ routineId }: { routineId: number }) {
   // Plate Calculator
   const [isCalculatorOpen, setIsCalculatorOpen] = useState(false);
 
+  // Confirm early finish
+  const [isConfirmFinishOpen, setIsConfirmFinishOpen] = useState(false);
+
   // Save Weight Dialog
   const [isSaveWeightOpen, setIsSaveWeightOpen] = useState(false);
   const [manualWeight, setManualWeight] = useState("");
@@ -119,6 +123,8 @@ export function WorkoutMode({ routineId }: { routineId: number }) {
 
   // Pesos de la última sesión por ejercicio (para sugerencia de progresión)
   const lastWeightsRef = useRef<Map<string, number>>(new Map());
+  // Recomendaciones del último entreno por ejercicio
+  const lastRecsRef = useRef<Map<string, { headline: string; detail: string; emoji: string; color: string }>>(new Map());
 
   // Inicializar logs desde la rutina (solo pesos del historial, sin sesión guardada)
   function initFromRoutine(r: NonNullable<typeof routine>) {
@@ -139,17 +145,21 @@ export function WorkoutMode({ routineId }: { routineId: number }) {
 
     setRestDuration(r.exercises[0]?.restSeconds ?? 150);
 
-    Promise.all(r.exercises.map((ex) => getLastWeight(ex.name))).then(
-      (weights) => {
-        weights.forEach((w, i) => {
-          if (w > 0) {
-            initLogs[i].sets.forEach((s) => { s.weight = w; });
-            lastWeightsRef.current.set(r.exercises[i].name, w);
-          }
-        });
-        setExerciseLogs([...initLogs]);
-      },
-    );
+    Promise.all([
+      Promise.all(r.exercises.map((ex) => getLastWeight(ex.name))),
+      Promise.all(r.exercises.map((ex) => getLastRecommendation(ex.name))),
+    ]).then(([weights, recs]) => {
+      weights.forEach((w, i) => {
+        if (w > 0) {
+          initLogs[i].sets.forEach((s) => { s.weight = w; });
+          lastWeightsRef.current.set(r.exercises[i].name, w);
+        }
+      });
+      recs.forEach((rec, i) => {
+        if (rec) lastRecsRef.current.set(r.exercises[i].name, rec);
+      });
+      setExerciseLogs([...initLogs]);
+    });
   }
 
   // Al cargar la rutina: verificar si hay sesión guardada
@@ -338,12 +348,21 @@ export function WorkoutMode({ routineId }: { routineId: number }) {
     setIndex: number,
     value: string,
   ) {
+    // Allow empty, digits, and a single decimal point (e.g. "12.", "12.5")
+    if (value !== "" && !/^\d*\.?\d*$/.test(value)) return;
     setExerciseLogs((prev) => {
       const updated = [...prev];
       const sets = [...updated[exIndex].sets];
-      // Allow empty string, convert to number or keep empty
-      const numValue = value === "" ? "" : parseFloat(value);
-      const finalWeight = isNaN(Number(numValue)) ? 0 : numValue;
+      // Keep raw string while typing (preserves trailing dot), convert to number when complete
+      let finalWeight: number | string;
+      if (value === "" || value === ".") {
+        finalWeight = "";
+      } else if (value.endsWith(".") || value.endsWith(".0")) {
+        finalWeight = value; // preserve "12." or "12.0" during typing
+      } else {
+        const parsed = parseFloat(value);
+        finalWeight = isNaN(parsed) ? 0 : parsed;
+      }
       sets[setIndex] = {
         ...sets[setIndex],
         weight: finalWeight,
@@ -479,6 +498,26 @@ export function WorkoutMode({ routineId }: { routineId: number }) {
   async function handleFinish() {
     if (!routine || !startTimeRef.current) return;
 
+    // Attach RPE recommendations to each exercise before saving
+    const exercisesWithRecs = exerciseLogs.map((exLog) => {
+      const routineEx = routine.exercises.find((ex) => ex.id === exLog.exerciseId);
+      const completedSets = exLog.sets.filter((s) => s.completed);
+      if (completedSets.length === 0) return exLog;
+      const setsForEngine: SetAnalysis[] = completedSets.map((s) => ({
+        weight: s.weight === "" ? 0 : Number(s.weight) || 0,
+        unit: s.unit ?? "kg",
+        reps: s.reps,
+        targetReps: routineEx?.reps,
+        rpe: s.rpe as RPEValue | undefined,
+        completed: true,
+      }));
+      const rec = getRPERecommendation(exLog.muscleGroup ?? "", exLog.exerciseName ?? "", setsForEngine);
+      if (rec) {
+        return { ...exLog, lastRecommendation: { headline: rec.headline, detail: rec.detail, emoji: rec.emoji, color: rec.color } };
+      }
+      return exLog;
+    });
+
     const endTime = new Date();
     const log: Omit<WorkoutLog, "id"> = {
       routineId: routine.id!,
@@ -488,7 +527,7 @@ export function WorkoutMode({ routineId }: { routineId: number }) {
       endTime,
       duration: elapsed,
       completed: true,
-      exercises: exerciseLogs,
+      exercises: exercisesWithRecs,
     };
 
     try {
@@ -968,6 +1007,23 @@ ${exerciseLines}
                   </p>
                 );
               })()}
+              {(() => {
+                const exName = currentGroup[0]?.log.exerciseName;
+                const allDone = currentGroup[0]?.log.sets.every((s) => s.completed);
+                if (allDone) return null; // Don't show last rec if current exercise is done (show live rec instead)
+                const rec = exName ? lastRecsRef.current.get(exName) : undefined;
+                if (!rec) return null;
+                return (
+                  <div className={cn(
+                    "mt-1.5 rounded-lg border px-2.5 py-1.5 text-left max-w-[260px]",
+                    RECOMMENDATION_COLORS[rec.color as keyof typeof RECOMMENDATION_COLORS] || RECOMMENDATION_COLORS.blue,
+                  )}>
+                    <p className="text-[10px] font-semibold leading-tight">
+                      {rec.emoji} Último entreno: {rec.headline}
+                    </p>
+                  </div>
+                );
+              })()}
               <Button
                 variant="ghost"
                 size="sm"
@@ -1053,7 +1109,9 @@ ${exerciseLines}
                 <span className="col-span-2 text-center">OK</span>
               </div>
               {log.sets.map((set, si) => {
-                const weightValue = set.weight === "" ? 0 : Number(set.weight);
+                // Preserve raw string for display (allows "12." mid-typing)
+                const weightDisplay = set.weight === "" ? "" : typeof set.weight === "string" ? set.weight : set.weight;
+                const weightNumeric = set.weight === "" ? 0 : Number(set.weight) || 0;
                 const isCompleted = Boolean(set.completed);
                 return (
                   <div key={si} className="mb-2">
@@ -1072,7 +1130,7 @@ ${exerciseLines}
                         <Input
                           type="text"
                           inputMode="decimal"
-                          value={weightValue === 0 ? "" : weightValue}
+                          value={weightDisplay === "" || weightDisplay === 0 ? "" : weightDisplay}
                           onChange={(e) =>
                             handleWeightChange(flatIndex, si, e.target.value)
                           }
@@ -1111,6 +1169,7 @@ ${exerciseLines}
                       <div className="col-span-3">
                         <Input
                           type="text"
+                          inputMode="decimal"
                           value={set.reps}
                           onChange={(e) =>
                             updateSet(flatIndex, si, "reps", e.target.value)
@@ -1276,7 +1335,7 @@ ${exerciseLines}
           </Button>
         ) : (
           <Button
-            onClick={handleFinish}
+            onClick={() => setIsConfirmFinishOpen(true)}
             variant="outline"
             className="w-full rounded-xl py-6 text-base font-medium"
             size="lg"
@@ -1285,6 +1344,37 @@ ${exerciseLines}
           </Button>
         )}
       </div>
+
+      {/* Confirm Early Finish Dialog */}
+      <Dialog open={isConfirmFinishOpen} onOpenChange={setIsConfirmFinishOpen}>
+        <DialogContent className="sm:max-w-sm w-[85vw] rounded-xl z-60">
+          <DialogHeader>
+            <DialogTitle>Terminar entrenamiento</DialogTitle>
+          </DialogHeader>
+          <p className="text-sm text-muted-foreground">
+            Aún quedan ejercicios o series sin completar. ¿Seguro que quieres finalizar el entrenamiento ahora?
+          </p>
+          <DialogFooter className="flex gap-2 mt-2">
+            <Button
+              variant="outline"
+              onClick={() => setIsConfirmFinishOpen(false)}
+              className="flex-1"
+            >
+              Cancelar
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={() => {
+                setIsConfirmFinishOpen(false);
+                handleFinish();
+              }}
+              className="flex-1"
+            >
+              Sí, terminar
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* Swap Exercise Dialog */}
       <Dialog open={isSwapOpen} onOpenChange={setIsSwapOpen}>
