@@ -22,7 +22,7 @@ export default function CallbackContent() {
     const errorParam = searchParams.get("error");
 
     if (errorParam) {
-      setError("Error de autorización: " + errorParam);
+      setError("Autorización denegada por Spotify.");
       return;
     }
 
@@ -30,6 +30,21 @@ export default function CallbackContent() {
       setError("No se recibió código de autorización");
       return;
     }
+
+    // Prevent double execution (React StrictMode or searchParams change)
+    const alreadyProcessed = sessionStorage.getItem("spotify_code_used");
+    if (alreadyProcessed === code) return;
+    sessionStorage.setItem("spotify_code_used", code);
+
+    // Validate CSRF state parameter
+    const stateParam = searchParams.get("state");
+    const savedState = sessionStorage.getItem("spotify_oauth_state");
+    if (savedState && stateParam !== savedState) {
+      setError("Error de seguridad: state inválido. Intenta conectar de nuevo.");
+      sessionStorage.removeItem("spotify_oauth_state");
+      return;
+    }
+    sessionStorage.removeItem("spotify_oauth_state");
 
     // Recuperar code_verifier guardado durante connect()
     const codeVerifier = sessionStorage.getItem("spotify_code_verifier");
@@ -39,11 +54,15 @@ export default function CallbackContent() {
     }
 
     // Intercambiar code por token usando PKCE (sin client_secret)
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 15000);
+
     fetch("https://accounts.spotify.com/api/token", {
       method: "POST",
       headers: {
         "Content-Type": "application/x-www-form-urlencoded",
       },
+      signal: controller.signal,
       body: new URLSearchParams({
         grant_type: "authorization_code",
         code,
@@ -67,10 +86,11 @@ export default function CallbackContent() {
           );
           localStorage.setItem(
             "spotify_token_expires",
-            String(Date.now() + data.expires_in * 1000),
+            String(Date.now() + (data.expires_in ?? 3600) * 1000),
           );
           // Limpiar sesión y volver a donde estaba el usuario
           sessionStorage.removeItem("spotify_code_verifier");
+          sessionStorage.removeItem("spotify_code_used");
           const returnPath = sessionStorage.getItem("spotify_return_path") || "/settings";
           sessionStorage.removeItem("spotify_return_path");
           router.push(returnPath);
@@ -79,9 +99,19 @@ export default function CallbackContent() {
         }
       })
       .catch((err) => {
-        console.error("Spotify callback error:", err);
-        setError("Error de conexión con Spotify");
-      });
+        if (err.name === "AbortError") {
+          setError("Tiempo de espera agotado. Intenta de nuevo.");
+        } else {
+          console.error("Spotify callback error:", err);
+          setError("Error de conexión con Spotify");
+        }
+      })
+      .finally(() => clearTimeout(timeout));
+
+    return () => {
+      clearTimeout(timeout);
+      controller.abort();
+    };
   }, [searchParams, router]);
 
   if (error) {

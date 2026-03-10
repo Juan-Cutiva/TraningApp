@@ -188,8 +188,14 @@ export async function getExerciseHistory(
     .where("completed")
     .equals(1)
     .toArray();
-  // Ordenar por fecha descendente (más reciente primero)
-  logs.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+  // Ordenar por fecha descendente (más reciente primero), filtrando fechas inválidas
+  logs.sort((a, b) => {
+    const ta = new Date(a.date).getTime();
+    const tb = new Date(b.date).getTime();
+    if (isNaN(tb)) return -1;
+    if (isNaN(ta)) return 1;
+    return tb - ta;
+  });
   const history: WorkoutExerciseLog[] = [];
   for (const log of logs) {
     const ex = log.exercises.find((e) => e.exerciseName === exerciseName);
@@ -285,7 +291,7 @@ export function calculate1RM(
 ): OneRMResult {
   const repsNum = typeof reps === "string" ? parseInt(reps, 10) || 0 : reps;
 
-  if (repsNum <= 0) {
+  if (repsNum <= 0 || !isFinite(weight) || weight <= 0) {
     return {
       epley: 0,
       brzycki: 0,
@@ -312,9 +318,11 @@ export function calculate1RM(
     };
   }
 
-  // Obtener coeficiente muscular si está disponible
+  // Obtener coeficiente muscular si está disponible (case-insensitive)
   const coef = muscleGroup
-    ? (MUSCLE_GROUP_COEFFICIENTS[muscleGroup] ?? DEFAULT_COEFFICIENT)
+    ? (MUSCLE_GROUP_COEFFICIENTS[muscleGroup]
+      ?? MUSCLE_GROUP_COEFFICIENTS[muscleGroup.charAt(0).toUpperCase() + muscleGroup.slice(1).toLowerCase()]
+      ?? DEFAULT_COEFFICIENT)
     : DEFAULT_COEFFICIENT;
 
   // Fórmulas científicas (todas usan el peso y repeticiones realizadas)
@@ -420,9 +428,9 @@ export async function checkAndUpdatePRs(
 
   const unit = completedSets[0]?.unit || "kg";
 
-  // Weight PR
+  // Weight PR — only create if weight > 0 to avoid meaningless PRs
   const weightPR = existingPRs.find((p) => p.type === "weight");
-  if (!weightPR || maxWeight > weightPR.value) {
+  if (maxWeight > 0 && (!weightPR || maxWeight > weightPR.value)) {
     const pr: PersonalRecord = {
       exerciseName,
       muscleGroup,
@@ -439,9 +447,9 @@ export async function checkAndUpdatePRs(
     newPRs.push(pr);
   }
 
-  // Reps PR
+  // Reps PR — only create if reps > 0 to avoid meaningless PRs
   const repsPR = existingPRs.find((p) => p.type === "reps");
-  if (!repsPR || maxReps > repsPR.value) {
+  if (maxReps > 0 && (!repsPR || maxReps > repsPR.value)) {
     const pr: PersonalRecord = {
       exerciseName,
       muscleGroup,

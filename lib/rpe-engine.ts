@@ -1,9 +1,11 @@
 /**
- * RPE-based progression recommendation engine — v4
+ * RPE-based progression recommendation engine — v5
  *
  * Based on: Schoenfeld 2017 (dose-response meta-analysis), Helms 2016 (RPE for
  * resistance training), Zourdos 2016 (RPE-RIR relationship), Hackett 2018
- * (muscle-size-dependent recovery), Ogasawara 2013 (detraining/retraining).
+ * (muscle-size-dependent recovery), Ogasawara 2013 (detraining/retraining),
+ * Refalo 2024 (rep drop-off and proximity to failure), ACSM 2009 (progression
+ * guidelines: 2-10% load increase when target reps exceeded).
  *
  * Factors analysed:
  *  - Weighted RPE (last sets carry more weight — represent peak accumulated fatigue)
@@ -13,9 +15,13 @@
  *  - At-top-of-range detection for double progression trigger
  *  - Rep deficit detection (consistently missing target = too heavy regardless of RPE)
  *  - Catastrophic fatigue jump (RPE spike > 3pts between consecutive sets)
- *  - **Failure position awareness** — early failure (set 1-2) is far more significant than
- *    late failure (set 3+). Early failure = weight too heavy. Late failure = expected
- *    accumulated fatigue (Helms 2016).
+ *  - **Rep drop-off analysis** — percentage of rep loss from first to last set.
+ *    <30% = normal fatigue, 30-50% = borderline, >50% = excessive load.
+ *    Based on Refalo et al.: training to failure produces ~54% drop-off vs ~27%
+ *    when stopping 3 RIR. This replaces the old "early failure" gate.
+ *  - **Failure position awareness** — failure in set 1 of 3+ = weight too heavy.
+ *    Failure in set 2 of 3 = normal accumulated fatigue (expected per research).
+ *    Failure only in last set = planned/acceptable. (Helms 2016, user feedback)
  *  - **Muscle size tiering** — large muscles (chest, back, quads) tolerate bigger
  *    increments and more failure volume than small muscles (biceps, triceps) or
  *    medium muscles (shoulders, hamstrings). Based on Hackett 2018.
@@ -138,24 +144,52 @@ function getMuscleSizeTier(muscleGroup: string): MuscleSizeTier {
   return "small";
 }
 
-// ─── Failure position analysis ───────────────────────────────────────────────
+// ─── Failure position & rep drop-off analysis ───────────────────────────────
 /**
- * Analyses WHERE in the session failure occurred. Based on Helms 2016:
- * - Failure in sets 1-2 with 3+ total sets → weight is objectively too heavy
- * - Failure only in last set → normal accumulated fatigue, acceptable
- * - Failure spread across middle sets → pacing/recovery issue
+ * Analyses WHERE failure occurred and HOW reps drop across sets.
+ *
+ * Key insight from research (Refalo 2024, Helms 2016, user feedback):
+ * - Failure in set 1 of 3+ → weight is objectively too heavy
+ * - Failure in set 2 of 3 → NORMAL accumulated fatigue (expected)
+ * - Failure only in last set → planned/acceptable
+ * - Rep drop-off is the primary metric for load appropriateness:
+ *   <30% = normal, 30-50% = borderline, >50% = excessive (Refalo: ~54% at
+ *   failure vs ~27% with 3 RIR)
  */
 interface FailureProfile {
   /** Total failures */
   count: number;
-  /** True if any failure in the first 2 sets (with 3+ total sets) */
-  earlyFailure: boolean;
+  /** True ONLY if failure in set 1 (with 3+ total sets) — genuinely too heavy */
+  firstSetFailure: boolean;
   /** True if failure ONLY in the last set */
   onlyLastSetFailure: boolean;
   /** Position of first failure (1-based) */
   firstFailurePosition: number;
   /** Ratio of total sets that are failures */
   failureRate: number;
+}
+
+/**
+ * Rep drop-off: percentage of rep loss from first to last set.
+ * Based on Refalo et al.:
+ * - Training to failure every set: ~54% total drop
+ * - Stopping 3 RIR every set: ~27% drop
+ * Practical thresholds:
+ * - <30%: normal fatigue
+ * - 30-50%: moderate fatigue, acceptable near failure
+ * - >50%: excessive — weight likely too heavy for this set scheme
+ */
+interface RepDropOff {
+  /** Percentage drop from first set reps to last set reps (0-1) */
+  dropOffRatio: number;
+  /** True if drop-off > 50% — pattern like 6→4→3 */
+  excessive: boolean;
+  /** True if drop-off 30-50% — pattern like 10→8→6 */
+  borderline: boolean;
+  /** Reps in first set */
+  firstSetReps: number;
+  /** Reps in last set */
+  lastSetReps: number;
 }
 
 function analyzeFailurePosition(ratedSets: { rpe?: RPEValue }[]): FailureProfile {
@@ -167,10 +201,31 @@ function analyzeFailurePosition(ratedSets: { rpe?: RPEValue }[]): FailureProfile
   const total = ratedSets.length;
   return {
     count,
-    earlyFailure: count > 0 && total >= 3 && failureIndices[0] < 2,
+    // v5: Only set 1 failure is "early" — set 2 failure is expected fatigue
+    firstSetFailure: count > 0 && total >= 3 && failureIndices[0] === 0,
     onlyLastSetFailure: count === 1 && failureIndices[0] === total - 1,
     firstFailurePosition: count > 0 ? failureIndices[0] + 1 : 0,
     failureRate: total > 0 ? count / total : 0,
+  };
+}
+
+function analyzeRepDropOff(completedSets: SetAnalysis[]): RepDropOff {
+  if (completedSets.length < 2) {
+    return { dropOffRatio: 0, excessive: false, borderline: false, firstSetReps: 0, lastSetReps: 0 };
+  }
+  const firstReps = parseActualReps(completedSets[0].reps);
+  const lastReps = parseActualReps(completedSets[completedSets.length - 1].reps);
+  if (firstReps === 0) {
+    return { dropOffRatio: 0, excessive: false, borderline: false, firstSetReps: 0, lastSetReps: 0 };
+  }
+  const ratio = (firstReps - lastReps) / firstReps;
+  const clamped = Math.max(0, Math.min(1, ratio));
+  return {
+    dropOffRatio: clamped,
+    excessive: clamped > 0.5,
+    borderline: clamped > 0.3 && clamped <= 0.5,
+    firstSetReps: firstReps,
+    lastSetReps: lastReps,
   };
 }
 
@@ -406,8 +461,9 @@ export function getRPERecommendation(
   const inconsistentPacing = stdDev > 2.5 && rpeValues.length >= 3;
   const catastrophicJump   = hasCatastrophicJump(rpeValues);
 
-  // ── Failure position analysis (v4) ──────────────────────────────────────
+  // ── Failure position & rep drop-off analysis (v5) ──────────────────────
   const fp = analyzeFailurePosition(ratedSets);
+  const dropOff = analyzeRepDropOff(completedSets);
 
   // ── Rep completion analysis ───────────────────────────────────────────────
   const topFraction   = fractionAtTopOfRange(completedSets, repRange);
@@ -438,18 +494,34 @@ export function getRPERecommendation(
   }
 
   // ─────────────────────────────────────────────────────────────────────────
-  // EARLY FAILURE — v4: failure in set 1 or 2 (with 3+ sets) means weight
-  // is objectively too heavy. Different from accumulated fatigue failure
-  // in the last set. Helms 2016: early RIR=0 indicates load exceeds capacity.
+  // FIRST-SET FAILURE — v5: failure in set 1 (with 3+ sets) means weight
+  // is objectively too heavy. Failure in set 2+ is expected accumulated
+  // fatigue (Helms 2016, Refalo 2024). Only set 1 failure = genuine overload.
   // ─────────────────────────────────────────────────────────────────────────
-  if (fp.earlyFailure && !isBodyweight && category !== "core") {
-    // Early failure = weight clearly too heavy — recommend meaningful decrease
+  if (fp.firstSetFailure && !isBodyweight && category !== "core") {
     const decreaseAmt = muscleTier === "small" ? increments.small : increments.standard;
     return {
       type: "decrease_weight",
       weightDelta: -decreaseAmt, repsDelta: 0,
-      headline: `Reduce ${decreaseAmt} ${unit} — fallo temprano (serie ${fp.firstFailurePosition})`,
-      detail: `Llegaste al fallo en la serie ${fp.firstFailurePosition} de ${setCount}. Eso indica que el peso supera tu capacidad actual — no es fatiga acumulada, es exceso de carga. ${muscleTier === "small" ? `Para ${muscleGroup} (músculo pequeño) es especialmente importante no sobrecargar.` : `Baja ${decreaseAmt} ${unit} para poder completar las series con calidad.`}`,
+      headline: `Reduce ${decreaseAmt} ${unit} — fallo en la primera serie`,
+      detail: `Llegaste al fallo en la serie 1 de ${setCount}. Eso indica que el peso supera tu capacidad actual — no es fatiga acumulada, es exceso de carga desde el inicio. ${muscleTier === "small" ? `Para ${muscleGroup} (músculo pequeño) es especialmente importante no sobrecargar.` : `Baja ${decreaseAmt} ${unit} para poder completar las series con calidad.`}`,
+      color: "orange", emoji: "⚠️",
+    };
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // EXCESSIVE REP DROP-OFF — v5: if reps drop >50% from first to last set,
+  // the weight is too heavy for this set scheme regardless of RPE.
+  // Based on Refalo et al.: ~54% drop = training to failure every set,
+  // ~27% drop = 3 RIR. >50% drop is unsustainable.
+  // ─────────────────────────────────────────────────────────────────────────
+  if (dropOff.excessive && !isBodyweight && category !== "core" && completedSets.length >= 3) {
+    const decreaseAmt = muscleTier === "small" ? increments.small : increments.standard;
+    return {
+      type: "decrease_weight_small",
+      weightDelta: -decreaseAmt, repsDelta: 0,
+      headline: `Reduce ${decreaseAmt} ${unit} — caída de reps excesiva`,
+      detail: `Tus reps cayeron de ${dropOff.firstSetReps} a ${dropOff.lastSetReps} (${Math.round(dropOff.dropOffRatio * 100)}% de caída). Una caída >50% indica que el peso es excesivo para ${setCount} series. Baja ${decreaseAmt} ${unit} para mantener reps más consistentes.`,
       color: "orange", emoji: "⚠️",
     };
   }
@@ -779,7 +851,7 @@ export function getRPERecommendation(
     }
 
     if (!finishedAtFailure && !rapidEscalation) {
-      // v4: Only large/medium muscles can progress at high RPE
+      // v5: Only large/medium muscles can progress at high RPE
       if (muscleTier === "large" || (muscleTier === "medium" && category === "compound")) {
         return {
           type: "increase_weight_small",
@@ -809,7 +881,7 @@ export function getRPERecommendation(
     }
 
     if (finishedAtFailure && failureCount === 1) {
-      // v4: Last-set-only failure — normal accumulated fatigue for large/medium muscles
+      // v5: Last-set-only failure — normal accumulated fatigue for large/medium muscles
       if (fp.onlyLastSetFailure && (muscleTier === "large" || muscleTier === "medium")) {
         return {
           type: "maintain",
@@ -840,19 +912,20 @@ export function getRPERecommendation(
 
   // ── ZONE: FAILURE / NEAR FAILURE (wAvgRpe > 9.5) ──────────────────────────
   if (failureCount >= 2) {
-    // v4: Multiple failures — scale response by muscle size
+    // v5: Multiple failures — scale response by muscle size + drop-off info
     const decreaseAmt = muscleTier === "small" ? increments.small : increments.standard;
+    const dropInfo = dropOff.excessive ? ` Caída de reps del ${Math.round(dropOff.dropOffRatio * 100)}% (${dropOff.firstSetReps}→${dropOff.lastSetReps}).` : "";
     return {
       type: "decrease_weight",
       weightDelta: -decreaseAmt, repsDelta: 0,
       headline: `Reduce ${decreaseAmt} ${unit} — peso excesivo`,
-      detail: `Fallo en ${failureCount}/${ratedSets.length} series (RPE ${wAvgRpe.toFixed(1)}).${fp.earlyFailure ? ` Primer fallo en serie ${fp.firstFailurePosition} — la carga es demasiado alta.` : ""} ${muscleTier === "small" ? `Para ${muscleGroup} baja ${decreaseAmt} ${unit} (progresión conservadora).` : `Baja ${decreaseAmt} ${unit} y reconstruye con buena técnica.`}`,
+      detail: `Fallo en ${failureCount}/${ratedSets.length} series (RPE ${wAvgRpe.toFixed(1)}).${dropInfo} ${muscleTier === "small" ? `Para ${muscleGroup} baja ${decreaseAmt} ${unit} (progresión conservadora).` : `Baja ${decreaseAmt} ${unit} y reconstruye con buena técnica.`}`,
       color: "red", emoji: "🔽",
     };
   }
 
   if (failureCount === 1) {
-    // v4: single failure at high RPE — last set vs earlier matters
+    // v5: single failure at high RPE — last set vs earlier matters
     if (fp.onlyLastSetFailure) {
       return {
         type: "maintain",

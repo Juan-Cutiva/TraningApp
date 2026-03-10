@@ -148,7 +148,7 @@ export function SettingsContent() {
       const text = await file.text();
       const data = JSON.parse(text);
 
-      if (!data.version || !data.routines) {
+      if (!data.version || !Array.isArray(data.routines)) {
         setImportStatus("Archivo no válido");
         return;
       }

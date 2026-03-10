@@ -306,10 +306,11 @@ export function WorkoutMode({ routineId }: { routineId: number }) {
 
   function handleResumeWorkout() {
     if (!savedSession || !routine) return;
+    const safeIndex = Math.min(savedSession.currentExIndex, savedSession.exerciseLogs.length - 1);
     setExerciseLogs(savedSession.exerciseLogs);
-    setCurrentExIndex(savedSession.currentExIndex);
+    setCurrentExIndex(Math.max(0, safeIndex));
     setElapsed(savedSession.elapsed);
-    setRestDuration(routine.exercises[savedSession.currentExIndex]?.restSeconds ?? 150);
+    setRestDuration(routine.exercises[safeIndex]?.restSeconds ?? 150);
     startTimeRef.current = new Date(savedSession.startedAt);
     setStarted(true);
     setSavedSession(null);
@@ -377,6 +378,7 @@ export function WorkoutMode({ routineId }: { routineId: number }) {
   function handleSwapExercise() {
     if (!newExName.trim() || swapIndex === null) return;
     setExerciseLogs((prev) => {
+      if (swapIndex < 0 || swapIndex >= prev.length) return prev;
       const updated = [...prev];
       updated[swapIndex] = {
         ...updated[swapIndex],
@@ -481,6 +483,7 @@ export function WorkoutMode({ routineId }: { routineId: number }) {
 
     // Update live exerciseLogs: only the selected exercise
     setExerciseLogs((prev) => {
+      if (targetFlatIndex < 0 || targetFlatIndex >= prev.length) return prev;
       const updated = [...prev];
       const sets = updated[targetFlatIndex].sets.map((s) => ({
         ...s,
@@ -509,7 +512,7 @@ export function WorkoutMode({ routineId }: { routineId: number }) {
           ? (parseFloat(s.weight.replace(",", ".")) || 0)
           : s.weight,
         reps: typeof s.reps === "string"
-          ? (s.reps.includes(",") ? s.reps.replace(",", ".") : s.reps)
+          ? (parseInt(s.reps.replace(",", "."), 10) || 0)
           : s.reps,
       })),
     }));
@@ -1019,7 +1022,7 @@ ${exerciseLines}
                 const unit = currentGroup[0]?.log.sets[0]?.unit ?? "kg";
                 return (
                   <p className="text-xs text-muted-foreground/70 mt-0.5">
-                    Última: {last} {unit} · Sugerido: {last + 2.5} {unit}
+                    Última: {last} {unit} · Sugerido: {Math.round((last + 2.5) * 10) / 10} {unit}
                   </p>
                 );
               })()}

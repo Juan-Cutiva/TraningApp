@@ -163,6 +163,11 @@ export function SpotifyProvider({ children }: { children: ReactNode }) {
       });
 
       if (!response.ok) {
+        // 401/403 = invalid refresh token → clear and disconnect
+        // 5xx/network = transient → don't clear storage, just disconnect UI
+        if (response.status === 401 || response.status === 403) {
+          clearSpotifyStorage();
+        }
         throw new Error(`Token refresh failed: ${response.status}`);
       }
 
@@ -172,7 +177,7 @@ export function SpotifyProvider({ children }: { children: ReactNode }) {
         localStorage.setItem("spotify_access_token", data.access_token);
         localStorage.setItem(
           "spotify_token_expires",
-          String(Date.now() + data.expires_in * 1000),
+          String(Date.now() + (data.expires_in ?? 3600) * 1000),
         );
         // El refresh token puede rotar en PKCE
         if (data.refresh_token) {
@@ -186,7 +191,6 @@ export function SpotifyProvider({ children }: { children: ReactNode }) {
       }
     } catch (error) {
       console.error("Error refreshing Spotify token:", error);
-      clearSpotifyStorage();
       setIsConnected(false);
       setAccessToken(null);
       setIsPremium(false);
@@ -200,6 +204,10 @@ export function SpotifyProvider({ children }: { children: ReactNode }) {
     // Guardar verifier y ruta actual para volver al mismo sitio tras el callback
     sessionStorage.setItem("spotify_code_verifier", verifier);
     sessionStorage.setItem("spotify_return_path", window.location.pathname);
+
+    // CSRF protection: random state parameter validated on callback
+    const state = crypto.randomUUID();
+    sessionStorage.setItem("spotify_oauth_state", state);
 
     const scopes = [
       "user-read-private",
@@ -217,6 +225,7 @@ export function SpotifyProvider({ children }: { children: ReactNode }) {
     authUrl.searchParams.append("scope", scopes);
     authUrl.searchParams.append("code_challenge_method", "S256");
     authUrl.searchParams.append("code_challenge", challenge);
+    authUrl.searchParams.append("state", state);
     authUrl.searchParams.append("show_dialog", "true");
 
     window.location.href = authUrl.toString();

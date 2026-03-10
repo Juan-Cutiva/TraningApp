@@ -187,7 +187,7 @@ export function RestTimer({ duration, onChangeDuration, onClose }: RestTimerProp
   const minutes = Math.floor(remaining / 60);
   const seconds = remaining % 60;
   const progress =
-    duration > 0 ? ((duration - remaining) / duration) * 100 : 100;
+    duration > 0 ? Math.min(100, Math.max(0, ((duration - remaining) / duration) * 100)) : 100;
 
   // SSR guard
   if (!pos) return null;
