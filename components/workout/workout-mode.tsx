@@ -346,8 +346,10 @@ export function WorkoutMode({ routineId }: { routineId: number }) {
   function handleWeightChange(
     exIndex: number,
     setIndex: number,
-    value: string,
+    rawValue: string,
   ) {
+    // Normalize comma to dot (e.g. "17,5" → "17.5")
+    const value = rawValue.replace(",", ".");
     // Allow empty, digits, and a single decimal point (e.g. "12.", "12.5")
     if (value !== "" && !/^\d*\.?\d*$/.test(value)) return;
     setExerciseLogs((prev) => {
@@ -498,8 +500,22 @@ export function WorkoutMode({ routineId }: { routineId: number }) {
   async function handleFinish() {
     if (!routine || !startTimeRef.current) return;
 
+    // Normalize data before saving: convert string weights/reps to numbers, comma→dot
+    const normalizedLogs = exerciseLogs.map((exLog) => ({
+      ...exLog,
+      sets: exLog.sets.map((s) => ({
+        ...s,
+        weight: typeof s.weight === "string"
+          ? (parseFloat(s.weight.replace(",", ".")) || 0)
+          : s.weight,
+        reps: typeof s.reps === "string"
+          ? (s.reps.includes(",") ? s.reps.replace(",", ".") : s.reps)
+          : s.reps,
+      })),
+    }));
+
     // Attach RPE recommendations to each exercise before saving
-    const exercisesWithRecs = exerciseLogs.map((exLog) => {
+    const exercisesWithRecs = normalizedLogs.map((exLog) => {
       const routineEx = routine.exercises.find((ex) => ex.id === exLog.exerciseId);
       const completedSets = exLog.sets.filter((s) => s.completed);
       if (completedSets.length === 0) return exLog;
@@ -1172,7 +1188,7 @@ ${exerciseLines}
                           inputMode="decimal"
                           value={set.reps}
                           onChange={(e) =>
-                            updateSet(flatIndex, si, "reps", e.target.value)
+                            updateSet(flatIndex, si, "reps", e.target.value.replace(",", "."))
                           }
                           disabled={isCompleted}
                           aria-label={`Reps serie ${set.setNumber}`}
