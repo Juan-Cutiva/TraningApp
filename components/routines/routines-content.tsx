@@ -5,9 +5,13 @@ import { useLiveQuery } from "dexie-react-hooks";
 import {
   db,
   estimateRoutineDuration,
+  resolveEquipment,
   type Routine,
   type RoutineExercise,
+  type Equipment,
 } from "@/lib/db";
+import { findCatalogEquipment, EQUIPMENT_TYPE_LABELS } from "@/lib/equipment-catalog";
+import { EquipmentPickerSheet } from "./equipment-picker-sheet";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -51,6 +55,7 @@ import {
 import Link from "next/link";
 import { format } from "date-fns";
 import { es } from "date-fns/locale";
+import { cn } from "@/lib/utils";
 
 const DAYS = [
   "Domingo",
@@ -142,6 +147,11 @@ export function RoutinesContent() {
   const [exWeight, setExWeight] = useState<string>("0");
   const [exUnit, setExUnit] = useState<string>("kg");
   const [exRest, setExRest] = useState<string>("150");
+  const [exEquipmentId, setExEquipmentId] = useState<string | undefined>();
+  const [exEquipmentPreview, setExEquipmentPreview] = useState<Equipment | undefined>();
+
+  // Equipment picker Sheet
+  const [equipmentPickerOpen, setEquipmentPickerOpen] = useState(false);
 
   function openNewRoutine() {
     setEditingRoutine(null);
@@ -172,6 +182,8 @@ export function RoutinesContent() {
     setExWeight("0");
     setExUnit("kg");
     setExRest("150");
+    setExEquipmentId(undefined);
+    setExEquipmentPreview(undefined);
     setExerciseDialogOpen(true);
   }
 
@@ -185,7 +197,33 @@ export function RoutinesContent() {
     setExWeight(String(ex.targetWeight));
     setExUnit(ex.unit || "kg");
     setExRest(String(ex.restSeconds));
+    setExEquipmentId(ex.equipmentId);
+    // Preload preview for the button label (async — doesn't block dialog open)
+    if (ex.equipmentId) {
+      const cat = findCatalogEquipment(ex.equipmentId);
+      if (cat) {
+        setExEquipmentPreview(cat);
+      } else {
+        resolveEquipment(ex.equipmentId).then((eq) => setExEquipmentPreview(eq));
+      }
+    } else {
+      setExEquipmentPreview(undefined);
+    }
     setExerciseDialogOpen(true);
+  }
+
+  function handleEquipmentSelected(eq: Equipment) {
+    setExEquipmentId(eq.id);
+    setExEquipmentPreview(eq);
+    // Auto-fill fields when the exercise name is empty or looks "default"
+    if (!exName.trim()) setExName(eq.name);
+    if (eq.muscleGroups.length > 0) setExMuscle(eq.muscleGroups[0]);
+    setExUnit(eq.unit);
+  }
+
+  function clearEquipment() {
+    setExEquipmentId(undefined);
+    setExEquipmentPreview(undefined);
   }
 
   function saveExercise() {
@@ -204,6 +242,7 @@ export function RoutinesContent() {
       unit: exUnit,
       restSeconds: parseNumber(exRest, 150),
       supersetId: existingExercise?.supersetId,
+      equipmentId: exEquipmentId,
     };
 
     if (editingExerciseIndex !== null) {
@@ -575,6 +614,15 @@ export function RoutinesContent() {
                                   SS
                                 </span>
                               )}
+                              {ex.equipmentId && (
+                                <span className="text-[10px] font-semibold bg-muted text-muted-foreground px-1.5 py-0.5 rounded">
+                                  {findCatalogEquipment(ex.equipmentId)?.name
+                                    ? EQUIPMENT_TYPE_LABELS[
+                                        findCatalogEquipment(ex.equipmentId)!.type
+                                      ] ?? "Equipo"
+                                    : "Equipo"}
+                                </span>
+                              )}
                             </span>
                             <span className="text-sm text-muted-foreground">
                               {ex.muscleGroup} • {ex.sets}×{ex.reps}
@@ -678,6 +726,52 @@ export function RoutinesContent() {
               </Select>
             </div>
 
+            {/* Equipment picker — tapping opens the full-screen sheet.
+                Used by the RPE engine to respect real increments. */}
+            <div>
+              <Label className="text-sm font-medium">Equipo</Label>
+              <div className="mt-1 flex items-center gap-2">
+                <Button
+                  type="button"
+                  variant="outline"
+                  className={cn(
+                    "flex-1 justify-between h-11 text-left font-normal",
+                    !exEquipmentPreview && "text-muted-foreground",
+                  )}
+                  onClick={() => setEquipmentPickerOpen(true)}
+                >
+                  <span className="truncate">
+                    {exEquipmentPreview
+                      ? exEquipmentPreview.name
+                      : "Seleccionar equipo (opcional)"}
+                  </span>
+                  <ChevronRight className="h-4 w-4 shrink-0 opacity-50" />
+                </Button>
+                {exEquipmentPreview && (
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    onClick={clearEquipment}
+                    aria-label="Quitar equipo"
+                    className="h-11 w-11 text-muted-foreground"
+                  >
+                    <Trash2 className="h-4 w-4" />
+                  </Button>
+                )}
+              </div>
+              {exEquipmentPreview && (
+                <p className="text-[10px] text-muted-foreground/70 mt-1">
+                  {EQUIPMENT_TYPE_LABELS[exEquipmentPreview.type] ?? exEquipmentPreview.type}
+                  {" · paso "}
+                  {exEquipmentPreview.increment} {exEquipmentPreview.unit}
+                  {exEquipmentPreview.microIncrement
+                    ? ` (micro ${exEquipmentPreview.microIncrement})`
+                    : ""}
+                </p>
+              )}
+            </div>
+
             <div className="grid grid-cols-3 gap-3">
               <div>
                 <Label className="text-xs text-muted-foreground">Series</Label>
@@ -771,6 +865,16 @@ export function RoutinesContent() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* Equipment picker — full-screen Sheet. Opens over the exercise
+          dialog so the user picks equipment without losing the in-progress
+          form state. */}
+      <EquipmentPickerSheet
+        open={equipmentPickerOpen}
+        onOpenChange={setEquipmentPickerOpen}
+        currentEquipmentId={exEquipmentId}
+        onSelect={handleEquipmentSelected}
+      />
     </div>
   );
 }
