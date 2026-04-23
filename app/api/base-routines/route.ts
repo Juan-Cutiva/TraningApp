@@ -150,7 +150,13 @@ export async function DELETE(req: NextRequest) {
 
   try {
     await initDB();
-    await sql`DELETE FROM app_config WHERE key = ${CONFIG_KEY}`;
+    // Remove both the data row and the seeded sentinel so a fresh cold start
+    // won't auto-re-seed the bundled defaults. The admin is explicitly asking
+    // for the bundled fallback; respect that until they POST a new version.
+    await sql`
+      DELETE FROM app_config
+      WHERE key IN ('base_routines', 'base_routines_seeded')
+    `;
     return NextResponse.json({ success: true });
   } catch (err) {
     console.error("DELETE /api/base-routines failed:", err);

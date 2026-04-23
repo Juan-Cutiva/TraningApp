@@ -72,3 +72,19 @@ export function formatTime(seconds: number): string {
   }
   return `${m.toString().padStart(2, "0")}:${s.toString().padStart(2, "0")}`;
 }
+
+// ─── Logging ─────────────────────────────────────────────────────────────────
+
+/**
+ * Dev-only logging. In production we don't have an error reporting service,
+ * so unconditional `console.error` calls just pollute the browser console and
+ * potentially leak internal details. Use `logError` for the "expected to be
+ * logged during development" case; keep `console.error` for truly exceptional
+ * server-side logs (API routes) where we need the stack.
+ */
+export function logError(...args: unknown[]): void {
+  if (process.env.NODE_ENV !== "production") {
+    // eslint-disable-next-line no-console
+    console.error(...args);
+  }
+}

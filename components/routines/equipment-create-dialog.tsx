@@ -25,7 +25,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { toast } from "sonner";
-import { cn } from "@/lib/utils";
+import { cn, logError } from "@/lib/utils";
 import { Camera, X } from "lucide-react";
 
 interface EquipmentCreateDialogProps {
@@ -169,7 +169,7 @@ export function EquipmentCreateDialog({
       reset();
       onCreated(eq);
     } catch (err) {
-      console.error(err);
+      logError(err);
       toast.error("No se pudo guardar el equipo.");
     } finally {
       setSaving(false);

@@ -54,7 +54,7 @@ import { toast } from "sonner";
 import { format } from "date-fns";
 import { es } from "date-fns/locale";
 import { useRouter } from "next/navigation";
-import { cn } from "@/lib/utils";
+import { cn, formatTime, logError } from "@/lib/utils";
 import { RestTimer } from "@/components/workout/rest-timer";
 import { PlateCalculator } from "@/components/workout/plate-calculator";
 import {
@@ -407,16 +407,6 @@ export function WorkoutMode({ routineId }: { routineId: number }) {
     }
   }, [exerciseLogs, currentExIndex, started, finished, routine?.id, startedAt, pausedAccumMs, pausedAt]);
 
-  function formatTime(seconds: number) {
-    const h = Math.floor(seconds / 3600);
-    const m = Math.floor((seconds % 3600) / 60);
-    const s = seconds % 60;
-    if (h > 0) {
-      return `${h}:${m.toString().padStart(2, "0")}:${s.toString().padStart(2, "0")}`;
-    }
-    return `${m.toString().padStart(2, "0")}:${s.toString().padStart(2, "0")}`;
-  }
-
   function handleResumeWorkout() {
     if (!savedSession || !routine) return;
     const safeIndex = Math.min(savedSession.currentExIndex, savedSession.exerciseLogs.length - 1);
@@ -768,7 +758,7 @@ export function WorkoutMode({ routineId }: { routineId: number }) {
       setSavedLogId(newId);
       setFinished(true);
     } catch (err) {
-      console.error("Error guardando el entrenamiento:", err);
+      logError("Error guardando el entrenamiento:", err);
       toast.error("No se pudo guardar el entrenamiento.", {
         description: "Tu progreso sigue seguro. Intenta de nuevo.",
         duration: 6000,

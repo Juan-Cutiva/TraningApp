@@ -32,6 +32,22 @@ export function logout(): void {
   localStorage.removeItem(LAST_VALIDATED_KEY);
   localStorage.removeItem(USER_EMAIL_KEY);
   localStorage.removeItem(USER_ROLE_KEY);
+
+  // Also clear workout session drafts and rest-timer UI state so the next
+  // user that logs in on the same device doesn't inherit them.
+  try {
+    const toDelete: string[] = [];
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i);
+      if (!k) continue;
+      if (k.startsWith("workout_active_") || k.startsWith("rest_timer_")) {
+        toDelete.push(k);
+      }
+    }
+    toDelete.forEach((k) => localStorage.removeItem(k));
+  } catch {
+    // localStorage unavailable — best-effort cleanup.
+  }
 }
 
 function saveSession(userId: number, email: string, role: string): void {

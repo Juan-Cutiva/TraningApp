@@ -1,4 +1,5 @@
 import { neon } from "@neondatabase/serverless";
+import { BASE_ROUTINES } from "./base-routines";
 
 export const sql = neon(process.env.DATABASE_URL!);
 
@@ -38,6 +39,27 @@ async function doInit(): Promise<void> {
       updated_by  TEXT
     )
   `;
+
+  // Seed the bundled BASE_ROUTINES into app_config on first boot so the DB
+  // is authoritative from day 1. The sentinel key `base_routines_seeded`
+  // prevents re-seeding after an admin DELETEs to intentionally reset back
+  // to the bundled fallback (both keys get removed together by the DELETE
+  // endpoint, so a subsequent cold start won't re-seed automatically).
+  const seededRows = (await sql`
+    SELECT key FROM app_config WHERE key = 'base_routines_seeded' LIMIT 1
+  `) as { key: string }[];
+  if (seededRows.length === 0) {
+    await sql`
+      INSERT INTO app_config (key, value, updated_at, updated_by)
+      VALUES ('base_routines', ${JSON.stringify(BASE_ROUTINES)}::jsonb, now(), 'system-seed')
+      ON CONFLICT (key) DO NOTHING
+    `;
+    await sql`
+      INSERT INTO app_config (key, value, updated_at, updated_by)
+      VALUES ('base_routines_seeded', 'true'::jsonb, now(), 'system-seed')
+      ON CONFLICT (key) DO NOTHING
+    `;
+  }
 }
 
 /**
