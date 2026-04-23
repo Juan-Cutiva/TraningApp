@@ -1655,7 +1655,10 @@ ${exerciseLines}
         </DialogContent>
       </Dialog>
 
-      {/* Confirm Exit Dialog — gives the user the choice to save or leave for later */}
+      {/* Confirm Exit Dialog — gives the user the choice to save or leave for later.
+          Uses a plain div instead of DialogFooter because DialogFooter forces
+          sm:flex-row sm:justify-end which would push buttons outside the dialog
+          on desktop. */}
       <Dialog open={isExitConfirmOpen} onOpenChange={setIsExitConfirmOpen}>
         <DialogContent className="sm:max-w-sm w-[85vw] rounded-xl z-60">
           <DialogHeader>
@@ -1664,7 +1667,7 @@ ${exerciseLines}
           <p className="text-sm text-muted-foreground">
             ¿Quieres finalizar y guardar este entrenamiento, o salir y retomarlo más tarde?
           </p>
-          <DialogFooter className="flex-col gap-2 mt-2">
+          <div className="flex flex-col gap-2 mt-2">
             <Button
               onClick={() => handleExitRequest(true)}
               disabled={isFinishing}
@@ -1688,7 +1691,7 @@ ${exerciseLines}
             >
               Cancelar
             </Button>
-          </DialogFooter>
+          </div>
         </DialogContent>
       </Dialog>
 
