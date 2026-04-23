@@ -6,12 +6,14 @@ import {
   db,
   getLastWeight,
   getLastRecommendation,
-  checkAndUpdatePRs,
+  computeNewPRs,
+  persistPRs,
   resolveEquipment,
   type WorkoutExerciseLog,
   type WorkoutSetLog,
   type WorkoutLog,
   type Equipment,
+  type PersonalRecord,
 } from "@/lib/db";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -186,6 +188,10 @@ export function WorkoutMode({ routineId }: { routineId: number }) {
   // Equipment (catalog or custom) por ejercicio, usado por el motor RPE para
   // respetar el incremento real del equipo en las recomendaciones.
   const equipmentRef = useRef<Map<string, Equipment>>(new Map());
+  // PRs computados (no persistidos) durante la sesión, mapeados por nombre
+  // de ejercicio. Se persisten atómicamente junto con el workoutLog en
+  // handleFinish, evitando PRs huérfanos si el save final falla.
+  const sessionPRsRef = useRef<Map<string, PersonalRecord[]>>(new Map());
 
   // Inicializar logs desde la rutina. Reps arrancan vacías para que el target
   // de la rutina aparezca como placeholder (el usuario escribe las reps reales).
@@ -574,12 +580,19 @@ export function WorkoutMode({ routineId }: { routineId: number }) {
       { ...currentSet, completed: true, weight: currentWeight, reps: currentReps },
     ];
 
-    // Verificar PRs con los datos correctos
-    const prs = await checkAndUpdatePRs(
+    // Compute potential PRs for the live toast — they are NOT persisted here.
+    // Persistence happens atomically inside handleFinish's transaction so PRs
+    // can't end up in Dexie without the workoutLog that produced them.
+    const prs = await computeNewPRs(
       exLog.exerciseName,
       completedSets,
       exLog.muscleGroup,
     );
+    // Track the latest per-exercise PRs in a session ref so handleFinish can
+    // persist them without recomputing all exercises at save time.
+    if (prs.length > 0) {
+      sessionPRsRef.current.set(exLog.exerciseName, prs);
+    }
     if (prs.length > 0) {
       prs.forEach((p, i) => {
         scheduleTimer(() => {
@@ -723,14 +736,35 @@ export function WorkoutMode({ routineId }: { routineId: number }) {
       exercises: exercisesWithRecs,
     };
 
-    // Single transaction: workoutLog + any PR updates triggered at save time would go
-    // here together. PRs are already written live in completeSet, so only workoutLogs
-    // participates — but we still wrap it to future-proof and get atomic failure semantics.
+    // Single transaction: workoutLog + all session PRs committed together.
+    // Previously PRs were written live in completeSet, which could leave them
+    // orphaned if handleFinish later failed. Now computeNewPRs runs live for
+    // toast UX only; the DB write happens here, atomically with the log.
     try {
-      const newId = await db.transaction("rw", db.workoutLogs, async () => {
-        return (await db.workoutLogs.add(log as WorkoutLog)) as number;
-      });
+      // Recompute PRs against the final normalized set data so the persisted
+      // values reflect what's really stored (not in-progress session state).
+      const prsToPersist: PersonalRecord[] = [];
+      for (const exLog of normalizedLogs) {
+        const prs = await computeNewPRs(
+          exLog.exerciseName,
+          exLog.sets,
+          exLog.muscleGroup,
+        );
+        prsToPersist.push(...prs);
+      }
+
+      const newId = await db.transaction(
+        "rw",
+        db.workoutLogs,
+        db.personalRecords,
+        async () => {
+          const id = (await db.workoutLogs.add(log as WorkoutLog)) as number;
+          await persistPRs(prsToPersist);
+          return id;
+        },
+      );
       localStorage.removeItem(sessionKey(routine.id!));
+      sessionPRsRef.current.clear();
       setSavedLogId(newId);
       setFinished(true);
     } catch (err) {

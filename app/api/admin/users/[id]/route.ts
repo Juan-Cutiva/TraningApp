@@ -49,6 +49,36 @@ export async function PATCH(
     return NextResponse.json({ error: "Nada que actualizar." }, { status: 400 });
   }
 
+  // Guard: prevent demoting the last admin or deactivating them — either
+  // would leave the system without any admin able to manage users or edit
+  // base routines. Only runs when the patch would change role or active.
+  const demotesAdmin = role !== undefined && role !== "admin";
+  const deactivates = active === false;
+  if (demotesAdmin || deactivates) {
+    const targetRows = (await sql`
+      SELECT role, active FROM users WHERE id = ${userId} LIMIT 1
+    `) as { role: string; active: boolean }[];
+    if (targetRows.length === 0) {
+      return NextResponse.json({ error: "Usuario no encontrado." }, { status: 404 });
+    }
+    const target = targetRows[0];
+    if (target.role === "admin" && target.active) {
+      const countRows = (await sql`
+        SELECT COUNT(*)::int AS n FROM users WHERE role = 'admin' AND active = true
+      `) as { n: number }[];
+      const activeAdmins = countRows[0]?.n ?? 0;
+      if (activeAdmins <= 1) {
+        return NextResponse.json(
+          {
+            error:
+              "No se puede dejar al sistema sin admins activos. Promueve o activa a otro admin primero.",
+          },
+          { status: 400 }
+        );
+      }
+    }
+  }
+
   values.push(userId);
   const query = `UPDATE users SET ${updates.join(", ")} WHERE id = $${i} RETURNING id, email, active, role, created_at`;
 
@@ -92,6 +122,28 @@ export async function DELETE(
       { error: "No puedes eliminar tu propia cuenta." },
       { status: 400 }
     );
+  }
+
+  // Prevent removing the last admin — the system needs at least one to
+  // edit base routines and manage users. Only checks when the target is
+  // actually an admin; regular users can be deleted freely.
+  const targetRows = await sql`
+    SELECT role FROM users WHERE id = ${userId} LIMIT 1
+  `;
+  if (targetRows.length === 0) {
+    return NextResponse.json({ error: "Usuario no encontrado." }, { status: 404 });
+  }
+  if (targetRows[0].role === "admin") {
+    const countRows = (await sql`
+      SELECT COUNT(*)::int AS n FROM users WHERE role = 'admin' AND active = true
+    `) as { n: number }[];
+    const activeAdmins = countRows[0]?.n ?? 0;
+    if (activeAdmins <= 1) {
+      return NextResponse.json(
+        { error: "No se puede eliminar el último admin activo del sistema." },
+        { status: 400 }
+      );
+    }
   }
 
   const rows = await sql`

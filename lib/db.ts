@@ -78,6 +78,12 @@ export interface PersonalRecord {
   muscleGroup?: string;
   type: "weight" | "reps" | "1rm";
   value: number;
+  /**
+   * Unit the `value` is expressed in. Optional for back-compat — older records
+   * without a unit are assumed to be in kg. Used for cross-unit comparison
+   * (e.g. a 130 lb bench PR vs a 60 kg PR resolves correctly).
+   */
+  unit?: string;
   date: Date;
   details: string;
 }
@@ -496,14 +502,31 @@ export function getPercentageOf1RM(weight: number, reps: number): number {
   return Math.round(percentage);
 }
 
-export async function checkAndUpdatePRs(
+/**
+ * Convert any supported weight to kg for cross-unit PR comparison.
+ * Anything that isn't "lb"/"lbs" is assumed to be kg (including "otro").
+ */
+export function toKg(weight: number, unit: string | undefined): number {
+  if (!unit) return weight;
+  const u = unit.toLowerCase();
+  if (u === "lb" || u === "lbs") return weight * 0.453592;
+  return weight;
+}
+
+/**
+ * Compute the new PRs produced by a list of sets, comparing against existing
+ * DB PRs with unit-aware logic (e.g. 130 lb = 58.97 kg, so a 60 kg PR wins).
+ * Returns the new/updated PR payloads but does NOT persist them. Persistence
+ * is handled by `persistPRs` inside the handleFinish transaction so the
+ * workoutLog and its PRs are written atomically.
+ */
+export async function computeNewPRs(
   exerciseName: string,
   sets: WorkoutSetLog[],
   muscleGroup?: string,
 ): Promise<PersonalRecord[]> {
-  const newPRs: PersonalRecord[] = [];
   const completedSets = sets.filter((s) => s.completed);
-  if (completedSets.length === 0) return newPRs;
+  if (completedSets.length === 0) return [];
 
   const maxWeight = Math.max(
     ...completedSets.map((s) => Number(s.weight) || 0),
@@ -515,76 +538,106 @@ export async function checkAndUpdatePRs(
         : s.reps,
     ),
   );
+  const unit = completedSets[0]?.unit || "kg";
 
   const existingPRs = await db.personalRecords
     .where("exerciseName")
     .equals(exerciseName)
     .toArray();
 
-  const unit = completedSets[0]?.unit || "kg";
+  const out: PersonalRecord[] = [];
+  const now = new Date();
 
-  // Weight PR — only create if weight > 0 to avoid meaningless PRs
-  const weightPR = existingPRs.find((p) => p.type === "weight");
-  if (maxWeight > 0 && (!weightPR || maxWeight > weightPR.value)) {
-    const pr: PersonalRecord = {
-      exerciseName,
-      muscleGroup,
-      type: "weight",
-      value: maxWeight,
-      date: new Date(),
-      details: `${maxWeight} ${unit}`,
-    };
-    if (weightPR) {
-      await db.personalRecords.update(weightPR.id!, pr);
-    } else {
-      await db.personalRecords.add(pr);
+  // WEIGHT — compare in kg to allow lb ↔ kg progressions.
+  if (maxWeight > 0) {
+    const weightPR = existingPRs.find((p) => p.type === "weight");
+    const existingKg = weightPR ? toKg(weightPR.value, weightPR.unit) : 0;
+    const candidateKg = toKg(maxWeight, unit);
+    if (!weightPR || candidateKg > existingKg) {
+      out.push({
+        id: weightPR?.id,
+        exerciseName,
+        muscleGroup,
+        type: "weight",
+        value: maxWeight,
+        unit,
+        date: now,
+        details: `${maxWeight} ${unit}`,
+      });
     }
-    newPRs.push(pr);
   }
 
-  // Reps PR — only create if reps > 0 to avoid meaningless PRs
-  const repsPR = existingPRs.find((p) => p.type === "reps");
-  if (maxReps > 0 && (!repsPR || maxReps > repsPR.value)) {
-    const pr: PersonalRecord = {
-      exerciseName,
-      muscleGroup,
-      type: "reps",
-      value: maxReps,
-      date: new Date(),
-      details: `${maxReps} reps`,
-    };
-    if (repsPR) {
-      await db.personalRecords.update(repsPR.id!, pr);
-    } else {
-      await db.personalRecords.add(pr);
+  // REPS — unit-independent.
+  if (maxReps > 0) {
+    const repsPR = existingPRs.find((p) => p.type === "reps");
+    if (!repsPR || maxReps > repsPR.value) {
+      out.push({
+        id: repsPR?.id,
+        exerciseName,
+        muscleGroup,
+        type: "reps",
+        value: maxReps,
+        date: now,
+        details: `${maxReps} reps`,
+      });
     }
-    newPRs.push(pr);
   }
 
-  // 1RM PR - calcula el 1RM estimado basado en el mejor set
+  // 1RM — compare in kg equivalent.
   if (maxWeight > 0 && maxReps > 0) {
-    const oneRMResult = calculate1RM(maxWeight, maxReps, muscleGroup);
+    const oneRM = calculate1RM(maxWeight, maxReps, muscleGroup);
     const oneRMPR = existingPRs.find((p) => p.type === "1rm");
-
-    if (!oneRMPR || oneRMResult.promedio > oneRMPR.value) {
-      const pr: PersonalRecord = {
+    const existingKg = oneRMPR ? toKg(oneRMPR.value, oneRMPR.unit) : 0;
+    const candidateKg = toKg(oneRM.promedio, unit);
+    if (!oneRMPR || candidateKg > existingKg) {
+      out.push({
+        id: oneRMPR?.id,
         exerciseName,
         muscleGroup,
         type: "1rm",
-        value: oneRMResult.promedio,
-        date: new Date(),
-        details: `~${oneRMResult.promedio} ${unit} (${oneRMResult.fiabilidad})`,
-      };
-      if (oneRMPR) {
-        await db.personalRecords.update(oneRMPR.id!, pr);
-      } else {
-        await db.personalRecords.add(pr);
-      }
-      newPRs.push(pr);
+        value: oneRM.promedio,
+        unit,
+        date: now,
+        details: `~${oneRM.promedio} ${unit} (${oneRM.fiabilidad})`,
+      });
     }
   }
 
-  return newPRs;
+  return out;
+}
+
+/**
+ * Write an array of computed PRs (from `computeNewPRs`) to Dexie. Use inside
+ * a `db.transaction` together with the workoutLogs write so both succeed or
+ * neither does. Existing PRs are updated by id, new ones are added.
+ */
+export async function persistPRs(prs: PersonalRecord[]): Promise<void> {
+  for (const pr of prs) {
+    if (pr.id != null) {
+      const { id, ...rest } = pr;
+      await db.personalRecords.update(id, rest);
+    } else {
+      await db.personalRecords.add(pr);
+    }
+  }
+}
+
+/**
+ * @deprecated Use `computeNewPRs` + `persistPRs` inside a transaction for
+ * atomicity with the workoutLog write. This combined function writes PRs
+ * without the log and can produce orphan PRs if the log save later fails.
+ *
+ * Kept only for backward compatibility of any existing callers. Delete after
+ * verifying nothing else uses it.
+ */
+export async function checkAndUpdatePRs(
+  exerciseName: string,
+  sets: WorkoutSetLog[],
+  muscleGroup?: string,
+): Promise<PersonalRecord[]> {
+  const prs = await computeNewPRs(exerciseName, sets, muscleGroup);
+  await persistPRs(prs);
+  return prs;
 }
 
 /**

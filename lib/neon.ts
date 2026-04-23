@@ -2,8 +2,15 @@ import { neon } from "@neondatabase/serverless";
 
 export const sql = neon(process.env.DATABASE_URL!);
 
-/** Creates the users + app_config tables if they don't exist */
-export async function initDB(): Promise<void> {
+/**
+ * Module-level cache so we only run CREATE TABLE / ALTER once per process.
+ * Each Vercel serverless instance re-runs it on cold start, which is fine —
+ * the alternative (running on every request) was adding 2 round-trips of
+ * latency to every API call.
+ */
+let initPromise: Promise<void> | null = null;
+
+async function doInit(): Promise<void> {
   await sql`
     CREATE TABLE IF NOT EXISTS users (
       id            SERIAL PRIMARY KEY,
@@ -31,4 +38,19 @@ export async function initDB(): Promise<void> {
       updated_by  TEXT
     )
   `;
+}
+
+/**
+ * Idempotent, cached schema init. Concurrent callers share the same promise
+ * so we never race two CREATE TABLEs against each other.
+ */
+export async function initDB(): Promise<void> {
+  if (initPromise) return initPromise;
+  initPromise = doInit().catch((err) => {
+    // Reset the cache so the next request retries instead of getting stuck
+    // on a permanent failed promise.
+    initPromise = null;
+    throw err;
+  });
+  return initPromise;
 }
