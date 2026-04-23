@@ -30,6 +30,7 @@ import {
 import { startOfWeek, endOfWeek, isWithinInterval, format, subWeeks } from "date-fns";
 import { es } from "date-fns/locale";
 import { MuscleActivity } from "./muscle-activity";
+import { calcStreak } from "@/lib/streak";
 
 interface ActiveSession {
   routineId: number;
@@ -37,39 +38,6 @@ interface ActiveSession {
   elapsed: number;
   completedSets: number;
   totalSets: number;
-}
-
-/** Returns consecutive days (ending today or yesterday) where at least one workout was completed */
-function calcStreak(logs: { date: Date | string }[]): number {
-  if (!logs.length) return 0;
-
-  const trainedDays = new Set<string>();
-  for (const log of logs) {
-    const d = new Date(log.date);
-    if (isNaN(d.getTime())) continue;
-    trainedDays.add(
-      `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`,
-    );
-  }
-
-  const today = new Date();
-  const toKey = (d: Date) =>
-    `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
-
-  const check = new Date(today);
-  check.setHours(12, 0, 0, 0);
-
-  // If today not trained yet, start streak from yesterday
-  if (!trainedDays.has(toKey(check))) {
-    check.setDate(check.getDate() - 1);
-  }
-
-  let streak = 0;
-  while (trainedDays.has(toKey(check))) {
-    streak++;
-    check.setDate(check.getDate() - 1);
-  }
-  return streak;
 }
 
 function fmtTime(seconds: number) {
@@ -171,18 +139,30 @@ export function DashboardContent() {
     }) ?? [];
   const lastWeekDuration = lastWeekLogs.reduce((s, l) => s + l.duration, 0);
 
-  // Consistency: workouts this week / routines assigned to days
-  const assignedDays =
-    routines?.filter((r) => r.dayOfWeek !== null).length ?? 0;
+  // Consistency: workouts this week / UNIQUE days of the week with a routine.
+  // Deduplicating by dayOfWeek so users with two routines scheduled the same
+  // day don't inflate the denominator. Also caps at 7 (Mon–Sun).
+  const uniqueTrainingDays = useMemo(() => {
+    const s = new Set<number>();
+    (routines ?? []).forEach((r) => {
+      if (r.dayOfWeek !== null && r.dayOfWeek !== undefined) s.add(r.dayOfWeek);
+    });
+    return s.size;
+  }, [routines]);
+
   const consistency =
-    assignedDays > 0
-      ? Math.min(100, Math.round((weekLogs.length / assignedDays) * 100))
+    uniqueTrainingDays > 0
+      ? Math.min(100, Math.round((weekLogs.length / uniqueTrainingDays) * 100))
       : 0;
 
   const dayName = format(now, "EEEE", { locale: es });
 
-  // Racha de entrenamiento
-  const streak = useMemo(() => calcStreak(workoutLogs ?? []), [workoutLogs]);
+  // Racha de entrenamiento — respeta días de descanso (solo se rompe si faltas
+  // a un día DE RUTINA asignado, no por fines de semana libres).
+  const streak = useMemo(
+    () => calcStreak(workoutLogs ?? [], routines ?? []),
+    [workoutLogs, routines],
+  );
 
   // ¿La rutina de hoy ya fue completada?
   const todayStr = now.toDateString();

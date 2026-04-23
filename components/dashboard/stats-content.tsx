@@ -12,9 +12,6 @@ import {
   Line,
   BarChart,
   Bar,
-  PieChart,
-  Pie,
-  Cell,
   XAxis,
   YAxis,
   CartesianGrid,
@@ -27,6 +24,7 @@ import {
   startOfMonth,
   endOfMonth,
   format,
+  isWithinInterval,
 } from "date-fns";
 import { es } from "date-fns/locale";
 import {
@@ -36,6 +34,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { calcStreak, calcLongestStreak } from "@/lib/streak";
 
 const COLORS = [
   "#60a5fa",
@@ -56,7 +55,7 @@ interface ProgressData {
 
 interface Stats {
   totalWorkouts: number;
-  totalDuration: number;
+  thisWeekDuration: number;
   averageDuration: number;
   currentStreak: number;
   longestStreak: number;
@@ -64,13 +63,16 @@ interface Stats {
   thisMonthWorkouts: number;
   durationByWorkout: { date: string; duration: number }[];
   progressByExercise: ProgressData[];
-  muscleDistribution: { name: string; value: number }[];
+  /** Sets actually completed this week, by muscle. Resets Sunday 23:59 local. */
+  muscleActualWeek: { name: string; value: number }[];
+  /** Sets prescribed per week according to assigned routines, by muscle. */
+  musclePlannedWeek: { name: string; value: number }[];
   baseWeightForExercise: number;
 }
 
 const defaultStats: Stats = {
   totalWorkouts: 0,
-  totalDuration: 0,
+  thisWeekDuration: 0,
   averageDuration: 0,
   currentStreak: 0,
   longestStreak: 0,
@@ -78,12 +80,14 @@ const defaultStats: Stats = {
   thisMonthWorkouts: 0,
   durationByWorkout: [],
   progressByExercise: [],
-  muscleDistribution: [],
+  muscleActualWeek: [],
+  musclePlannedWeek: [],
   baseWeightForExercise: 0,
 };
 
 export function StatsContent() {
   const workoutLogs = useLiveQuery(() => db.workoutLogs.toArray());
+  const routines = useLiveQuery(() => db.routines.toArray());
   const [selectedExercise, setSelectedExercise] = useState<string>("all");
 
   const exerciseList = useMemo(() => {
@@ -103,109 +107,43 @@ export function StatsContent() {
     }
 
     const now = new Date();
+    // weekStartsOn: 1 → Monday; endOfWeek returns Sunday 23:59:59.999 local.
+    // This satisfies the "weekly reset on Sunday 23:59 in user's timezone" rule
+    // automatically since all dates are evaluated in local time.
     const weekStart = startOfWeek(now, { weekStartsOn: 1 });
     const weekEnd = endOfWeek(now, { weekStartsOn: 1 });
     const monthStart = startOfMonth(now);
     const monthEnd = endOfMonth(now);
 
-    const thisWeekWorkouts = workoutLogs.filter((log) => {
-      const logDate = new Date(log.date);
-      return logDate >= weekStart && logDate <= weekEnd && log.completed;
-    }).length;
+    const thisWeekLogs = workoutLogs.filter((log) => {
+      const d = new Date(log.date);
+      return (
+        !isNaN(d.getTime()) &&
+        log.completed &&
+        isWithinInterval(d, { start: weekStart, end: weekEnd })
+      );
+    });
+    const thisWeekWorkouts = thisWeekLogs.length;
+    const thisWeekDuration = thisWeekLogs.reduce((s, l) => s + l.duration, 0);
 
     const thisMonthWorkouts = workoutLogs.filter((log) => {
       const logDate = new Date(log.date);
       return logDate >= monthStart && logDate <= monthEnd && log.completed;
     }).length;
 
-    const totalDuration = workoutLogs.reduce(
-      (sum, log) => sum + log.duration,
-      0,
+    const completedLogs = workoutLogs.filter((l) => l.completed);
+    const totalDuration = completedLogs.reduce((sum, l) => sum + l.duration, 0);
+    const averageDuration =
+      completedLogs.length > 0 ? totalDuration / completedLogs.length : 0;
+
+    // Streak — uses the shared helper that respects assigned training days
+    const currentStreak = calcStreak(workoutLogs, routines ?? [], now);
+    const longestStreak = calcLongestStreak(workoutLogs, routines ?? []);
+
+    // Logs ordenados para duración (últimos 10, cronológicos)
+    const sortedLogs = [...completedLogs].sort(
+      (a, b) => new Date(b.date).getTime() - new Date(a.date).getTime(),
     );
-
-    const averageDuration = totalDuration / workoutLogs.length;
-
-    // Obtener días únicos con entrenamiento
-    const uniqueDaysSet = new Set<string>();
-    workoutLogs
-      .filter((l) => l.completed)
-      .forEach((log) => {
-        const dayKey = format(new Date(log.date), "yyyy-MM-dd");
-        uniqueDaysSet.add(dayKey);
-      });
-
-    const uniqueDays = Array.from(uniqueDaysSet).sort((a, b) =>
-      b.localeCompare(a),
-    );
-
-    // Logs ordenados para duración
-    const sortedLogs = [...workoutLogs]
-      .filter((l) => l.completed)
-      .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
-
-    // Calcular racha actual - solo cuenta días únicos
-    let currentStreak = 0;
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-
-    const mostRecentDay = uniqueDays[0] ? new Date(uniqueDays[0]) : null;
-    if (mostRecentDay) {
-      mostRecentDay.setHours(0, 0, 0, 0);
-      const diffFromToday = Math.floor(
-        (today.getTime() - mostRecentDay.getTime()) / (1000 * 60 * 60 * 24),
-      );
-
-      // Solo cuenta si entrenó hoy (0) o ayer (1)
-      if (diffFromToday <= 1) {
-        let checkDate = mostRecentDay;
-        for (const dayStr of uniqueDays) {
-          const checkDay = new Date(dayStr);
-          checkDay.setHours(0, 0, 0, 0);
-          const diff = Math.floor(
-            (checkDate.getTime() - checkDay.getTime()) / (1000 * 60 * 60 * 24),
-          );
-          if (diff === 0) {
-            currentStreak++;
-          } else if (diff === 1) {
-            currentStreak++;
-            checkDate = checkDay;
-          } else {
-            break;
-          }
-        }
-      }
-    }
-
-    // Calcular racha más larga
-    let longestStreak = 0;
-    let tempStreak = 0;
-    let prevDate: Date | null = null;
-    const sortedUniqueDays = [...uniqueDays].sort((a, b) => a.localeCompare(b));
-
-    for (const dayStr of sortedUniqueDays) {
-      const currentDate = new Date(dayStr);
-      currentDate.setHours(0, 0, 0, 0);
-      if (prevDate === null) {
-        tempStreak = 1;
-      } else {
-        const diff = Math.floor(
-          (currentDate.getTime() - prevDate.getTime()) / (1000 * 60 * 60 * 24),
-        );
-        if (diff === 1) {
-          tempStreak++;
-        } else {
-          tempStreak = 1;
-        }
-      }
-      if (tempStreak > longestStreak) {
-        longestStreak = tempStreak;
-      }
-      prevDate = currentDate;
-    }
-
-    if (longestStreak < currentStreak) {
-      longestStreak = currentStreak;
-    }
 
     const durationByWorkout = sortedLogs
       .slice(0, 10)
@@ -282,24 +220,41 @@ export function StatsContent() {
       );
     }
 
-    const muscleCounts: Record<string, number> = {};
-    workoutLogs.forEach((log) => {
+    // Muscle distribution — actually trained THIS WEEK (Mon–Sun local)
+    const muscleActualCounts: Record<string, number> = {};
+    thisWeekLogs.forEach((log) => {
       log.exercises.forEach((ex) => {
         const completedSets = ex.sets.filter((s) => s.completed).length;
         if (completedSets > 0) {
-          muscleCounts[ex.muscleGroup] =
-            (muscleCounts[ex.muscleGroup] || 0) + completedSets;
+          const group = ex.muscleGroup || "Otros";
+          muscleActualCounts[group] = (muscleActualCounts[group] || 0) + completedSets;
         }
       });
     });
+    const muscleActualWeek = Object.entries(muscleActualCounts)
+      .map(([name, value]) => ({ name, value }))
+      .sort((a, b) => b.value - a.value);
 
-    const muscleDistribution = Object.entries(muscleCounts)
+    // Muscle distribution — PLANNED per week according to assigned routines.
+    // Deduplicates by dayOfWeek so two routines on the same day count once.
+    const planned: Record<string, number> = {};
+    const seenDays = new Set<number>();
+    (routines ?? []).forEach((r) => {
+      if (r.dayOfWeek === null || r.dayOfWeek === undefined) return;
+      if (seenDays.has(r.dayOfWeek)) return;
+      seenDays.add(r.dayOfWeek);
+      r.exercises.forEach((ex) => {
+        const group = ex.muscleGroup || "Otros";
+        planned[group] = (planned[group] || 0) + (ex.sets || 0);
+      });
+    });
+    const musclePlannedWeek = Object.entries(planned)
       .map(([name, value]) => ({ name, value }))
       .sort((a, b) => b.value - a.value);
 
     return {
-      totalWorkouts: workoutLogs.filter((l) => l.completed).length,
-      totalDuration,
+      totalWorkouts: completedLogs.length,
+      thisWeekDuration,
       averageDuration,
       currentStreak,
       longestStreak,
@@ -307,10 +262,11 @@ export function StatsContent() {
       thisMonthWorkouts,
       durationByWorkout,
       progressByExercise,
-      muscleDistribution,
+      muscleActualWeek,
+      musclePlannedWeek,
       baseWeightForExercise,
     };
-  }, [workoutLogs, selectedExercise]);
+  }, [workoutLogs, routines, selectedExercise]);
 
   const formatDuration = (seconds: number) => {
     const hours = Math.floor(seconds / 3600);
@@ -381,14 +337,14 @@ export function StatsContent() {
                 <div className="flex items-center gap-2 mb-2">
                   <Flame className="h-4 w-4 text-chart-2" />
                   <span className="text-xs text-muted-foreground">
-                    Tiempo Total
+                    Tiempo esta semana
                   </span>
                 </div>
                 <p className="text-2xl font-bold text-foreground">
-                  {formatDuration(stats.totalDuration)}
+                  {formatDuration(stats.thisWeekDuration)}
                 </p>
                 <p className="text-xs text-muted-foreground mt-1">
-                  ~{formatDuration(stats.averageDuration)} promedio
+                  ~{formatDuration(stats.averageDuration)} por sesión
                 </p>
               </CardContent>
             </Card>
@@ -554,99 +510,117 @@ export function StatsContent() {
         </TabsContent>
 
         <TabsContent value="musculos" className="space-y-4">
-          {stats.muscleDistribution.length > 0 ? (
+          {stats.musclePlannedWeek.length === 0 && stats.muscleActualWeek.length === 0 ? (
+            <Card>
+              <CardContent className="p-8 text-center">
+                <Activity className="h-12 w-12 text-muted-foreground/30 mx-auto mb-3" />
+                <p className="text-muted-foreground">Sin datos aún</p>
+                <p className="text-xs text-muted-foreground mt-1">
+                  Crea rutinas y entrena para ver la distribución muscular.
+                </p>
+              </CardContent>
+            </Card>
+          ) : (
             <>
+              {/* Planificado por rutina */}
               <Card>
                 <CardHeader className="p-4 pb-2">
                   <CardTitle className="text-sm">
-                    Distribución de Series
+                    Planificado por semana
                   </CardTitle>
+                  <p className="text-xs text-muted-foreground mt-0.5">
+                    Series prescritas en tus rutinas asignadas (un día de la semana = una vez).
+                  </p>
                 </CardHeader>
                 <CardContent className="p-4 pt-0">
-                  <ErrorBoundary>
-                  <ResponsiveContainer width="100%" height={250}>
-                    <PieChart>
-                      <Pie
-                        data={stats.muscleDistribution}
-                        cx="50%"
-                        cy="50%"
-                        innerRadius={50}
-                        outerRadius={80}
-                        paddingAngle={2}
-                        dataKey="value"
-                        label={({ name, percent }) =>
-                          `${name} ${(percent * 100).toFixed(0)}%`
-                        }
-                        labelLine={false}
-                      >
-                        {stats.muscleDistribution.map((entry, index) => (
-                          <Cell
-                            key={`cell-${index}`}
-                            fill={COLORS[index % COLORS.length]}
-                          />
-                        ))}
-                      </Pie>
-                      <Tooltip
-                        formatter={(value: number, name: string) => [
-                          `${value} series`,
-                          name,
-                        ]}
-                      />
-                    </PieChart>
-                  </ResponsiveContainer>
-                  </ErrorBoundary>
-                </CardContent>
-              </Card>
-
-              <Card>
-                <CardHeader className="p-4 pb-2">
-                  <CardTitle className="text-sm">
-                    Top Grupos Musculares
-                  </CardTitle>
-                </CardHeader>
-                <CardContent className="p-4 pt-0">
-                  <div className="space-y-3">
-                    {stats.muscleDistribution
-                      .slice(0, 7)
-                      .map((muscle, index) => {
-                        const maxValue =
-                          stats.muscleDistribution[0]?.value || 1;
+                  {stats.musclePlannedWeek.length === 0 ? (
+                    <p className="text-xs text-muted-foreground py-4 text-center">
+                      No hay rutinas con día asignado. Asigna un día a cada rutina para ver este gráfico.
+                    </p>
+                  ) : (
+                    <div className="space-y-3 mt-2">
+                      {stats.musclePlannedWeek.map((muscle, index) => {
+                        const maxValue = stats.musclePlannedWeek[0]?.value || 1;
                         const percentage = (muscle.value / maxValue) * 100;
-
                         return (
                           <div key={muscle.name}>
                             <div className="flex justify-between text-sm mb-1">
-                              <span className="font-medium text-foreground">
-                                {muscle.name}
-                              </span>
-                              <span className="text-muted-foreground">
-                                {muscle.value} series
-                              </span>
+                              <span className="font-medium text-foreground">{muscle.name}</span>
+                              <span className="text-muted-foreground">{muscle.value} series</span>
                             </div>
                             <div className="h-2 bg-secondary rounded-full overflow-hidden">
                               <div
-                                className="h-full rounded-full"
+                                className="h-full rounded-full transition-all duration-500 ease-out"
                                 style={{
                                   width: `${percentage}%`,
-                                  backgroundColor:
-                                    COLORS[index % COLORS.length],
+                                  backgroundColor: COLORS[index % COLORS.length],
                                 }}
                               />
                             </div>
                           </div>
                         );
                       })}
-                  </div>
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+
+              {/* Trabajado realmente esta semana */}
+              <Card>
+                <CardHeader className="p-4 pb-2">
+                  <CardTitle className="text-sm">
+                    Trabajado esta semana
+                  </CardTitle>
+                  <p className="text-xs text-muted-foreground mt-0.5">
+                    Series completadas de lunes a domingo. Se reinicia el domingo 23:59.
+                  </p>
+                </CardHeader>
+                <CardContent className="p-4 pt-0">
+                  {stats.muscleActualWeek.length === 0 ? (
+                    <p className="text-xs text-muted-foreground py-4 text-center">
+                      Aún no has entrenado esta semana.
+                    </p>
+                  ) : (
+                    <div className="space-y-3 mt-2">
+                      {stats.muscleActualWeek.map((muscle, index) => {
+                        const maxValue = stats.muscleActualWeek[0]?.value || 1;
+                        const percentage = (muscle.value / maxValue) * 100;
+                        // Show planned target (if we have one) as a faint marker
+                        const planned = stats.musclePlannedWeek.find((m) => m.name === muscle.name)?.value;
+                        const reachedPct =
+                          planned && planned > 0
+                            ? Math.min(100, Math.round((muscle.value / planned) * 100))
+                            : null;
+                        return (
+                          <div key={muscle.name}>
+                            <div className="flex justify-between text-sm mb-1">
+                              <span className="font-medium text-foreground">{muscle.name}</span>
+                              <span className="text-muted-foreground">
+                                {muscle.value} series
+                                {reachedPct !== null && (
+                                  <span className="ml-1 text-[10px] opacity-70">
+                                    ({reachedPct}% del plan)
+                                  </span>
+                                )}
+                              </span>
+                            </div>
+                            <div className="h-2 bg-secondary rounded-full overflow-hidden">
+                              <div
+                                className="h-full rounded-full transition-all duration-500 ease-out"
+                                style={{
+                                  width: `${percentage}%`,
+                                  backgroundColor: COLORS[index % COLORS.length],
+                                }}
+                              />
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
                 </CardContent>
               </Card>
             </>
-          ) : (
-            <Card>
-              <CardContent className="p-8 text-center">
-                <Activity className="h-12 w-12 text-muted-foreground/30 mx-auto mb-3" />
-                <p className="text-muted-foreground">Sin datos aún</p>
-              </CardContent>
-            </Card>
           )}
         </TabsContent>
       </Tabs>
