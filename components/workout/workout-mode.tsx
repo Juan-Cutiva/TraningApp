@@ -1234,43 +1234,74 @@ ${exerciseLines}
                         </button>
                       )}
                     </p>
-                    {tipOpen && rec && (
-                      <div
-                        ref={tipCardRef}
-                        role="dialog"
-                        aria-label="Recomendación del último entrenamiento"
-                        className={cn(
-                          "relative mt-2 w-[min(280px,calc(100vw-2rem))] rounded-xl border p-3 text-left shadow-lg animate-in fade-in zoom-in-95 slide-in-from-top-1",
-                          RECOMMENDATION_COLORS[rec.color as keyof typeof RECOMMENDATION_COLORS] ||
-                            RECOMMENDATION_COLORS.blue,
-                        )}
-                      >
-                        <div className="flex items-start gap-2">
-                          <span className="text-lg leading-none mt-0.5" aria-hidden="true">
-                            {rec.emoji}
-                          </span>
-                          <div className="flex-1 min-w-0">
-                            <p className="text-[11px] font-bold uppercase tracking-wider opacity-70">
-                              Último entreno
-                            </p>
-                            <p className="text-sm font-bold leading-tight mt-0.5">
-                              {rec.headline}
-                            </p>
-                            <p className="text-xs leading-snug mt-1 opacity-80">
-                              {rec.detail}
-                            </p>
+                    {tipOpen && rec && (() => {
+                      const delta = rec.weightDelta ?? 0;
+                      const recommended =
+                        last > 0 ? Math.max(0, Math.round((last + delta) * 4) / 4) : null;
+                      return (
+                        <div
+                          ref={tipCardRef}
+                          role="dialog"
+                          aria-label="Recomendación del último entrenamiento"
+                          className={cn(
+                            "relative mt-2 w-[min(280px,calc(100vw-2rem))] rounded-xl border p-3 text-left shadow-lg animate-in fade-in zoom-in-95 slide-in-from-top-1",
+                            RECOMMENDATION_COLORS[rec.color as keyof typeof RECOMMENDATION_COLORS] ||
+                              RECOMMENDATION_COLORS.blue,
+                          )}
+                        >
+                          <div className="flex items-start gap-2">
+                            <span className="text-lg leading-none mt-0.5" aria-hidden="true">
+                              {rec.emoji}
+                            </span>
+                            <div className="flex-1 min-w-0">
+                              <p className="text-[11px] font-bold uppercase tracking-wider opacity-70">
+                                Último entreno
+                              </p>
+                              <p className="text-sm font-bold leading-tight mt-0.5">
+                                {rec.headline}
+                              </p>
+                              {(last > 0 || recommended !== null) && (
+                                <div className="mt-2 flex flex-col gap-0.5 text-xs font-mono tabular-nums">
+                                  {last > 0 && (
+                                    <div className="flex justify-between gap-3">
+                                      <span className="opacity-70">Última:</span>
+                                      <span className="font-semibold">
+                                        {last} {unit}
+                                      </span>
+                                    </div>
+                                  )}
+                                  {recommended !== null && (
+                                    <div className="flex justify-between gap-3">
+                                      <span className="opacity-70">Peso recomendado:</span>
+                                      <span className="font-semibold">
+                                        {recommended} {unit}
+                                        {delta !== 0 && (
+                                          <span className="ml-1 opacity-60">
+                                            ({delta > 0 ? "+" : ""}
+                                            {delta})
+                                          </span>
+                                        )}
+                                      </span>
+                                    </div>
+                                  )}
+                                </div>
+                              )}
+                              <p className="text-xs leading-snug mt-2 opacity-80">
+                                {rec.detail}
+                              </p>
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() => setTipOpenFor(null)}
+                              aria-label="Cerrar tip"
+                              className="shrink-0 rounded-md p-0.5 opacity-60 hover:opacity-100"
+                            >
+                              <X className="h-3.5 w-3.5" aria-hidden="true" />
+                            </button>
                           </div>
-                          <button
-                            type="button"
-                            onClick={() => setTipOpenFor(null)}
-                            aria-label="Cerrar tip"
-                            className="shrink-0 rounded-md p-0.5 opacity-60 hover:opacity-100"
-                          >
-                            <X className="h-3.5 w-3.5" aria-hidden="true" />
-                          </button>
                         </div>
-                      </div>
-                    )}
+                      );
+                    })()}
                   </>
                 );
               })()}
