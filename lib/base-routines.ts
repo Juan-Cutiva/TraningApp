@@ -9,6 +9,11 @@ import type { Routine } from "./db";
  * coincidencia confiable — el motor RPE usa el incremento del equipo para
  * escalar las recomendaciones de peso. Ejercicios sin equipmentId siguen
  * funcionando con los incrementos por defecto del motor.
+ *
+ * Estas rutinas también viven en Neon (tabla app_config, key=base_routines)
+ * y se sincronizan con todos los usuarios. initDB las seedea desde aquí la
+ * primera vez que corre el servidor. Después, solo el admin puede
+ * modificarlas vía /settings/base-routines.
  */
 export const BASE_ROUTINES: Omit<Routine, "id" | "createdAt" | "updatedAt">[] =
   [
@@ -65,7 +70,6 @@ export const BASE_ROUTINES: Omit<Routine, "id" | "createdAt" | "updatedAt">[] =
           restSeconds: 150,
           equipmentId: "cat_neutral_pulldown",
         },
-
         {
           id: "mon_05",
           name: "Remo en cable",
@@ -115,7 +119,7 @@ export const BASE_ROUTINES: Omit<Routine, "id" | "createdAt" | "updatedAt">[] =
         },
         {
           id: "mon_09",
-          name: "Encogimiento máquina con pausa",
+          name: "Encogimientos con mancuernas",
           muscleGroup: "Trapecio",
           sets: 4,
           reps: "10-12",
@@ -123,7 +127,7 @@ export const BASE_ROUTINES: Omit<Routine, "id" | "createdAt" | "updatedAt">[] =
           unit: "kg",
           restSeconds: 120,
           supersetId: "061zmjp",
-          equipmentId: "cat_shrug_machine",
+          equipmentId: "cat_shrug_dumbbell",
         },
         {
           id: "mon_10",
@@ -192,7 +196,6 @@ export const BASE_ROUTINES: Omit<Routine, "id" | "createdAt" | "updatedAt">[] =
         },
         {
           id: "tue_10",
-          // "Core" → "Abdominales" (alineado al catálogo)
           name: "Russian Twist",
           muscleGroup: "Abdominales",
           sets: 3,
@@ -204,7 +207,7 @@ export const BASE_ROUTINES: Omit<Routine, "id" | "createdAt" | "updatedAt">[] =
         },
         {
           id: "tue_11",
-          name: "Elevación lateral polea",
+          name: "Elevación lateral con mancuernas",
           muscleGroup: "Hombros",
           sets: 4,
           reps: "14-16",
@@ -212,7 +215,7 @@ export const BASE_ROUTINES: Omit<Routine, "id" | "createdAt" | "updatedAt">[] =
           unit: "kg",
           restSeconds: 15,
           supersetId: "g4qafa0",
-          equipmentId: "cat_lateral_raise_cable",
+          equipmentId: "cat_lateral_raise_db",
         },
         {
           id: "tue_12",
@@ -251,7 +254,7 @@ export const BASE_ROUTINES: Omit<Routine, "id" | "createdAt" | "updatedAt">[] =
         },
         {
           id: "tue_06",
-          name: "Extensión unilateral",
+          name: "Extensión de cuádriceps",
           muscleGroup: "Piernas",
           sets: 3,
           reps: "12-15",
@@ -263,7 +266,6 @@ export const BASE_ROUTINES: Omit<Routine, "id" | "createdAt" | "updatedAt">[] =
         },
         {
           id: "tue_02",
-          // Abducción trabaja principalmente glúteo medio — muscleGroup ajustado
           name: "Abducción máquina",
           muscleGroup: "Gluteos",
           sets: 3,
@@ -276,7 +278,6 @@ export const BASE_ROUTINES: Omit<Routine, "id" | "createdAt" | "updatedAt">[] =
         },
         {
           id: "tue_08",
-          // "Gemelos" → "Pantorrillas" (alineado al catálogo)
           name: "Gemelo de pie",
           muscleGroup: "Pantorrillas",
           sets: 3,
@@ -389,7 +390,6 @@ export const BASE_ROUTINES: Omit<Routine, "id" | "createdAt" | "updatedAt">[] =
           supersetId: "9gwgy04",
           equipmentId: "cat_triceps_pushdown",
         },
-
         {
           id: "thu_05",
           name: "Face pull pesado",
@@ -402,7 +402,6 @@ export const BASE_ROUTINES: Omit<Routine, "id" | "createdAt" | "updatedAt">[] =
           supersetId: "6gwjy14",
           equipmentId: "cat_face_pull",
         },
-
         {
           id: "thu_07",
           name: "Press francés con mancuernas",
@@ -439,7 +438,6 @@ export const BASE_ROUTINES: Omit<Routine, "id" | "createdAt" | "updatedAt">[] =
           supersetId: "mfmclju",
           equipmentId: "cat_lateral_raise_machine",
         },
-
         {
           id: "thu_12",
           name: "Pájaros peck deck",
