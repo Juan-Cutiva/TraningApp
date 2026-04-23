@@ -2,7 +2,6 @@ import type { Metadata, Viewport } from "next";
 import { Inter, Space_Grotesk } from "next/font/google";
 import { ThemeProvider } from "@/components/theme-provider";
 import { AppShell } from "@/components/app-shell";
-import { SpotifyProvider } from "@/components/spotify/spotify-context";
 import { Toaster } from "@/components/ui/sonner";
 import { AuthProvider } from "@/components/auth/auth-provider";
 import "./globals.css";
@@ -85,9 +84,7 @@ export default function RootLayout({
       >
         <ThemeProvider attribute="class" defaultTheme="dark" enableSystem>
           <AuthProvider>
-            <SpotifyProvider>
-              <AppShell>{children}</AppShell>
-            </SpotifyProvider>
+            <AppShell>{children}</AppShell>
           </AuthProvider>
           <Toaster position="top-center" richColors />
         </ThemeProvider>

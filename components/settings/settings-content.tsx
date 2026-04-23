@@ -39,30 +39,23 @@ import {
   Dumbbell,
   TrendingUp,
   Plus,
-  Music2,
-  Music,
   LogOut,
 } from "lucide-react";
 
 import { BASE_ROUTINES } from "@/lib/base-routines";
 import { useAuth } from "@/components/auth/auth-provider";
 import { AdminUsersPanel } from "./admin-users-panel";
-import { useSpotify } from "@/components/spotify/spotify-context";
 
 const DEFAULT_SETTINGS = {
   defaultRestSeconds: 150,
   theme: "dark" as const,
   bodyWeight: null as number | null,
   defaultUnit: "kg",
-  musicService: null as "spotify" | null,
-  musicEmbedUrl: "",
-  showMusicWidget: false,
 };
 
 export function SettingsContent() {
   const { logout, isAdmin } = useAuth();
   const { theme, setTheme } = useTheme();
-  const { isConnected: spotifyConnected, connect: spotifyConnect, disconnect: spotifyDisconnect } = useSpotify();
   const [mounted, setMounted] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [exportStatus, setExportStatus] = useState<string | null>(null);
@@ -352,92 +345,6 @@ export function SettingsContent() {
               Se usa para calcular el IMC en Peso Corporal
             </p>
           </div>
-        </CardContent>
-      </Card>
-
-      {/* Music Widget */}
-      <Card className="mb-5">
-        <CardHeader className="p-5 pb-3">
-          <CardTitle className="text-base flex items-center gap-2">
-            <Music2 className="h-5 w-5 text-chart-4" />
-            Música en Entrenamiento
-          </CardTitle>
-        </CardHeader>
-        <CardContent className="p-5 pt-0 flex flex-col gap-5">
-          <div>
-            <Label
-              htmlFor="music-service"
-              className="text-sm font-medium flex items-center gap-2"
-            >
-              <Music
-                className="h-4 w-4 text-muted-foreground"
-                aria-hidden="true"
-              />
-              Servicio de música
-            </Label>
-            <Select
-              value={settings?.musicService || "none"}
-              onValueChange={(value: string) =>
-                updateSetting("musicService", value === "none" ? null : value)
-              }
-            >
-              <SelectTrigger id="music-service" className="mt-2 h-11">
-                <SelectValue placeholder="Selecciona un servicio" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="none">Desactivado</SelectItem>
-                <SelectItem value="spotify">
-                  <div className="flex items-center gap-2">
-                    <svg
-                      viewBox="0 0 24 24"
-                      className="h-4 w-4"
-                      fill="currentColor"
-                      aria-hidden="true"
-                    >
-                      <path d="M12 0C5.4 0 0 5.4 0 12s5.4 12 12 12 12-5.4 12-12S18.66 0 12 0zm5.521 17.34c-.24.359-.66.48-1.021.24-2.82-1.74-6.36-2.101-10.561-1.141-.418.122-.779-.179-.899-.539-.12-.421.18-.78.54-.9 4.56-1.021 8.52-.6 11.64 1.32.42.18.479.659.301 1.02zm1.44-3.3c-.301.42-.841.6-1.262.3-3.239-1.98-8.159-2.58-11.939-1.38-.479.12-1.02-.12-1.14-.6-.12-.48.12-1.021.6-1.141C9.6 9.9 15 10.561 18.72 12.84c.361.181.54.78.241 1.2zm.12-3.36C15.24 8.4 8.82 8.16 5.16 9.301c-.6.179-1.2-.181-1.38-.721-.18-.601.18-1.2.72-1.381 4.26-1.26 11.28-1.02 15.721 1.621.539.3.719 1.02.419 1.56-.299.421-1.02.599-1.559.3z" />
-                    </svg>
-                    Spotify
-                  </div>
-                </SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
-
-          {settings?.musicService === "spotify" && (
-            <div className="flex items-center justify-between gap-3 p-4 rounded-xl border bg-card">
-              <div className="flex items-center gap-3 min-w-0">
-                <div className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-xl ${spotifyConnected ? "bg-green-500/15" : "bg-muted"}`}>
-                  <svg viewBox="0 0 24 24" className={`h-5 w-5 ${spotifyConnected ? "text-green-500" : "text-muted-foreground"}`} fill="currentColor" aria-hidden="true">
-                    <path d="M12 0C5.4 0 0 5.4 0 12s5.4 12 12 12 12-5.4 12-12S18.66 0 12 0zm5.521 17.34c-.24.359-.66.48-1.021.24-2.82-1.74-6.36-2.101-10.561-1.141-.418.122-.779-.179-.899-.539-.12-.421.18-.78.54-.9 4.56-1.021 8.52-.6 11.64 1.32.42.18.479.659.301 1.02zm1.44-3.3c-.301.42-.841.6-1.262.3-3.239-1.98-8.159-2.58-11.939-1.38-.479.12-1.02-.12-1.14-.6-.12-.48.12-1.021.6-1.141C9.6 9.9 15 10.561 18.72 12.84c.361.181.54.78.241 1.2zm.12-3.36C15.24 8.4 8.82 8.16 5.16 9.301c-.6.179-1.2-.181-1.38-.721-.18-.601.18-1.2.72-1.381 4.26-1.26 11.28-1.02 15.721 1.621.539.3.719 1.02.419 1.56-.299.421-1.02.599-1.559.3z" />
-                  </svg>
-                </div>
-                <div className="min-w-0">
-                  <p className="text-sm font-semibold text-foreground">Spotify</p>
-                  <p className="text-xs text-muted-foreground">
-                    {spotifyConnected ? "Cuenta conectada" : "Sin conectar"}
-                  </p>
-                </div>
-              </div>
-              {spotifyConnected ? (
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="shrink-0 text-destructive border-destructive/30 hover:bg-destructive/10"
-                  onClick={spotifyDisconnect}
-                >
-                  Desconectar
-                </Button>
-              ) : (
-                <Button
-                  size="sm"
-                  className="shrink-0 bg-green-500 hover:bg-green-600 text-white"
-                  onClick={spotifyConnect}
-                >
-                  Conectar
-                </Button>
-              )}
-            </div>
-          )}
         </CardContent>
       </Card>
 

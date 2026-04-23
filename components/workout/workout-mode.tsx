@@ -146,6 +146,24 @@ export function WorkoutMode({ routineId }: { routineId: number }) {
   const [manualWeight, setManualWeight] = useState("");
   const [manualUnit, setManualUnit] = useState("kg");
 
+  // Pending timers (PR toasts + weight-saved confirmation) — cleared on unmount
+  // to avoid firing callbacks on a torn-down tree.
+  const pendingTimers = useRef<Set<ReturnType<typeof setTimeout>>>(new Set());
+  useEffect(() => {
+    const timers = pendingTimers.current;
+    return () => {
+      timers.forEach((t) => clearTimeout(t));
+      timers.clear();
+    };
+  }, []);
+  function scheduleTimer(fn: () => void, ms: number) {
+    const id = setTimeout(() => {
+      pendingTimers.current.delete(id);
+      fn();
+    }, ms);
+    pendingTimers.current.add(id);
+  }
+
   // Pesos de la última sesión por ejercicio (para sugerencia de progresión)
   const lastWeightsRef = useRef<Map<string, number>>(new Map());
   // Recomendaciones del último entreno por ejercicio (incluye weightDelta para
@@ -183,9 +201,12 @@ export function WorkoutMode({ routineId }: { routineId: number }) {
     return Math.max(0, roundSuggestedWeight(last + delta));
   }
 
-  // Inicializar logs desde la rutina (solo pesos del historial, sin sesión guardada).
-  // Reps start empty so the routine's target shows as a placeholder — user types
-  // the reps actually performed each set.
+  // Inicializar logs desde la rutina. Reps arrancan vacías para que el target
+  // de la rutina aparezca como placeholder (el usuario escribe las reps reales).
+  // RPE default "normal" (≈ RPE 7.5 / 2 RIR) — el motor exige ≥50% de cobertura
+  // de RPE para devolver recomendación; este default garantiza que haya
+  // recomendación incluso si el usuario no toca los botones de RPE. Si toca, su
+  // selección sobreescribe el default.
   function initFromRoutine(r: NonNullable<typeof routine>) {
     const initLogs: WorkoutExerciseLog[] = r.exercises.map((ex) => ({
       exerciseId: ex.id,
@@ -197,6 +218,7 @@ export function WorkoutMode({ routineId }: { routineId: number }) {
         weight: ex.targetWeight,
         unit: ex.unit || "kg",
         reps: "",
+        rpe: "normal" as const,
         completed: false,
       })),
     }));
@@ -399,7 +421,14 @@ export function WorkoutMode({ routineId }: { routineId: number }) {
   function handleResumeWorkout() {
     if (!savedSession || !routine) return;
     const safeIndex = Math.min(savedSession.currentExIndex, savedSession.exerciseLogs.length - 1);
-    setExerciseLogs(savedSession.exerciseLogs);
+    // Backfill rpe on any set missing it — protects resumed sessions saved
+    // under older code paths that didn't default rpe. Without this the engine
+    // can't produce a recommendation at end of exercise.
+    const patchedLogs = savedSession.exerciseLogs.map((ex) => ({
+      ...ex,
+      sets: ex.sets.map((s) => ({ ...s, rpe: s.rpe ?? ("normal" as const) })),
+    }));
+    setExerciseLogs(patchedLogs);
     setCurrentExIndex(Math.max(0, safeIndex));
     setRestDuration(routine.exercises[safeIndex]?.restSeconds ?? 150);
     setStartedAt(savedSession.startedAt);
@@ -560,7 +589,7 @@ export function WorkoutMode({ routineId }: { routineId: number }) {
     );
     if (prs.length > 0) {
       prs.forEach((p, i) => {
-        setTimeout(() => {
+        scheduleTimer(() => {
           toast.custom(() => (
             <div className="flex items-center gap-3 rounded-2xl border border-yellow-500/30 bg-card px-4 py-3 shadow-2xl">
               <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-yellow-500/15">
@@ -627,7 +656,7 @@ export function WorkoutMode({ routineId }: { routineId: number }) {
     setWeightUpdated(true);
     setIsSaveWeightOpen(false);
     setManualWeight("");
-    setTimeout(() => setWeightUpdated(false), 2000);
+    scheduleTimer(() => setWeightUpdated(false), 2000);
   }
 
   async function handleFinish() {

@@ -142,10 +142,20 @@ async function revalidate(elapsed?: number): Promise<ValidationResult> {
     localStorage.setItem(LAST_VALIDATED_KEY, new Date().toISOString());
     return "revalidated";
   } catch {
-    const elapsedMs =
-      elapsed ??
-      Date.now() -
-        new Date(localStorage.getItem(LAST_VALIDATED_KEY) ?? "0").getTime();
+    let elapsedMs = elapsed;
+    if (elapsedMs === undefined) {
+      const raw = localStorage.getItem(LAST_VALIDATED_KEY);
+      const parsedTs = raw ? new Date(raw).getTime() : NaN;
+      // Corrupt or missing timestamp → treat as fully expired so we log out
+      // instead of silently granting grace (which is what happened before
+      // because `NaN < anything` is always false, so the "grace" branch
+      // never fired and neither did the logout).
+      if (!Number.isFinite(parsedTs)) {
+        logout();
+        return "grace_expired";
+      }
+      elapsedMs = Date.now() - parsedTs;
+    }
 
     if (elapsedMs < VALIDATION_INTERVAL_MS + GRACE_PERIOD_MS) {
       return "grace";

@@ -95,10 +95,6 @@ export interface UserSettings {
   bodyWeight: number | null;
   height?: number | null; // height in cm for BMI
   defaultUnit: string;
-  // Music widget settings
-  musicService: "spotify" | "youtube" | null;
-  musicEmbedUrl: string;
-  showMusicWidget: boolean;
 }
 
 export interface BodyWeightEntry {
@@ -172,9 +168,6 @@ export async function getOrCreateSettings(): Promise<UserSettings> {
     theme: "dark",
     bodyWeight: null,
     defaultUnit: "kg",
-    musicService: null,
-    musicEmbedUrl: "",
-    showMusicWidget: false,
   });
   return (await db.userSettings.get(id))!;
 }

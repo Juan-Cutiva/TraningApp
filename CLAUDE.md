@@ -41,26 +41,31 @@ Core training logic beyond simple logging. Analyzes each exercise's completed se
 
 ### Routing & components
 
-Standard Next.js App Router under `app/`: dashboard (`/`), routines, workout/[id] (active workout), history, personal-records, stats, body-weight, settings. API routes in `app/api/` (auth + admin). `app/callback/` handles Spotify OAuth.
+Standard Next.js App Router under `app/`: dashboard (`/`), routines, workout/[id] (active workout), history, personal-records, stats, body-weight, settings. API routes in `app/api/` (auth + admin).
 
-`components/` mirrors page routes (`dashboard/`, `workout/`, `routines/`, `history/`, `personal-records/`, `body-weight/`, `settings/`). `components/ui/` is shadcn/ui primitives. `components/auth/` holds the provider + login/subscription gating. `components/spotify/` is the optional music widget.
+`components/` mirrors page routes (`dashboard/`, `workout/`, `routines/`, `history/`, `personal-records/`, `body-weight/`, `settings/`). `components/ui/` is shadcn/ui primitives. `components/auth/` holds the provider + login/subscription gating.
 
-Notable complex components: `components/workout/workout-mode.tsx` (active workout + finished screen), `components/dashboard/dashboard-content.tsx` (weekly comparison), `components/history/history-content.tsx` (PDF export via jsPDF), `components/routines/routines-content.tsx`.
+Notable complex components: `components/workout/workout-mode.tsx` (active workout + finished screen + floating rest timer), `components/dashboard/dashboard-content.tsx` (weekly comparison, streak, consistency), `components/dashboard/stats-content.tsx` (weekly time + planned-vs-actual muscle charts), `components/history/history-content.tsx` (PDF export via jsPDF), `components/routines/routines-content.tsx`.
+
+### Streak & weekly metrics
+
+`lib/streak.ts` is the single source of truth for both current and longest streak. The streak rule respects the user's schedule: it only breaks when the user misses a day that has an assigned routine (`dayOfWeek !== null`). Rest days (weekdays with no routine) are skipped without penalty. Both the dashboard and `/stats` import from this file.
+
+Weekly aggregates (tiempo, chart muscular real, chart muscular planificado) use `date-fns` `startOfWeek(..., { weekStartsOn: 1 })` → Monday 00:00 local to Sunday 23:59:59.999 local, so the week resets naturally at Sunday 23:59 in the user's timezone.
+
+### Workout timer architecture
+
+The active workout clock and the floating rest timer both use **`Date.now()` as the source of truth** rather than `setInterval` incrementing state. `setInterval` only fires re-renders; the displayed elapsed/remaining is derived fresh from `Date.now()` on every render. This makes them immune to background-tab throttling and DOM churn, and survives reloads because only timestamps are persisted to localStorage. See [lib/streak.ts comments in workout-mode.tsx] and [components/workout/rest-timer.tsx] for details.
 
 ### Seed routines
 
 `lib/base-routines.ts` exports `BASE_ROUTINES` — the default weekly template inserted on first launch by the seed logic in `lib/db.ts`.
-
-### Spotify integration
-
-Optional. Requires `SPOTIFY_REDIRECT_URI` in `.env.local`. OAuth callback at `/callback`. Wrapped in `SpotifyProvider` in `app/layout.tsx`.
 
 ## Environment
 
 `.env.local` must define:
 
 - `DATABASE_URL` — Neon Postgres connection string (sa-east-1). Required for auth.
-- `SPOTIFY_REDIRECT_URI` — Only needed if using the Spotify widget.
 
 ## Key conventions
 
@@ -68,6 +73,8 @@ Optional. Requires `SPOTIFY_REDIRECT_URI` in `.env.local`. OAuth callback at `/c
 - `next.config.mjs` sets `typescript.ignoreBuildErrors: true` **and** `images.unoptimized: true` — TS errors will not block builds, so `npm run lint` is the only static check in CI-like usage. Still prefer fixing TS errors.
 - `dayOfWeek` on routines: `0=Sunday … 6=Saturday`, `null`=unassigned.
 - RPE values on sets: `"easy" | "normal" | "hard" | "failure"` (mapped to RIR in `rpe-engine.ts`).
-- Weight/reps inputs: accept comma as decimal separator in the UI, normalized to dot before persisting.
+- Weight/reps inputs: accept comma as decimal separator in the UI, normalized to dot before persisting. Both weight and reps accept decimals (partial reps like `7.5` are supported).
+- In the active workout, reps from the routine appear as the input's **placeholder**, not a prefilled editable value — the user types the reps they actually performed. Weight is prefilled with `lastSessionWeight + lastRecommendation.weightDelta` so the suggested progression is already applied.
 - UI components follow shadcn/ui patterns (Radix primitives + Tailwind, `cn()` helper from `lib/utils.ts`).
 - **No volume metric anywhere.** `totalVolume = weight × reps` was explicitly removed from all UI, share text, and PDF export. Do not reintroduce it when adding features.
+- No Spotify / music integration. It was removed — don't re-add music features unless explicitly requested.
