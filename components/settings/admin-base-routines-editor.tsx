@@ -30,13 +30,6 @@ import {
   SheetFooter,
 } from "@/components/ui/sheet";
 import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-  DialogFooter,
-} from "@/components/ui/dialog";
-import {
   ArrowLeft,
   Plus,
   Edit2,
@@ -56,29 +49,10 @@ import {
   cn,
   DAY_NAMES as DAYS,
   DAY_SELECT_OPTIONS as DAY_OPTIONS,
-  parseNumber,
   generateId,
 } from "@/lib/utils";
 import type { RoutineExercise } from "@/lib/db";
-import type { Equipment } from "@/lib/db";
-import { findCatalogEquipment, EQUIPMENT_TYPE_LABELS } from "@/lib/equipment-catalog";
-import { resolveEquipment } from "@/lib/db";
-import { EquipmentPickerSheet } from "@/components/routines/equipment-picker-sheet";
-
-const MUSCLE_GROUPS = [
-  "Pecho",
-  "Espalda",
-  "Hombros",
-  "Biceps",
-  "Triceps",
-  "Piernas",
-  "Gluteos",
-  "Abdominales",
-  "Trapecio",
-  "Antebrazos",
-  "Pantorrillas",
-  "Full Body",
-];
+import { ExerciseFormDialog } from "@/components/routines/exercise-form-dialog";
 
 // ─── Component ────────────────────────────────────────────────────────────────
 
@@ -118,19 +92,10 @@ export function AdminBaseRoutinesEditor() {
     setSheetOpen(open);
   }
 
-  // Exercise dialog (inside routine editor)
+  // Exercise dialog (inside routine editor) — form state lives inside the
+  // shared <ExerciseFormDialog>; we only need the index being edited.
   const [exDialogOpen, setExDialogOpen] = useState(false);
   const [editingExIndex, setEditingExIndex] = useState<number | null>(null);
-  const [exName, setExName] = useState("");
-  const [exMuscle, setExMuscle] = useState("Pecho");
-  const [exSets, setExSets] = useState("3");
-  const [exReps, setExReps] = useState<string | number>("10");
-  const [exWeight, setExWeight] = useState("");
-  const [exUnit, setExUnit] = useState("kg");
-  const [exRest, setExRest] = useState("150");
-  const [exEquipmentId, setExEquipmentId] = useState<string | undefined>();
-  const [exEquipmentPreview, setExEquipmentPreview] = useState<Equipment | undefined>();
-  const [equipmentPickerOpen, setEquipmentPickerOpen] = useState(false);
 
   // ── Initial load ───────────────────────────────────────────────────────
   useEffect(() => {
@@ -206,70 +171,20 @@ export function AdminBaseRoutinesEditor() {
   // ── Exercise-level ops ──────────────────────────────────────────────────
   function openNewEx() {
     setEditingExIndex(null);
-    setExName("");
-    setExMuscle("Pecho");
-    setExSets("3");
-    setExReps("10");
-    setExWeight("");
-    setExUnit("kg");
-    setExRest("150");
-    setExEquipmentId(undefined);
-    setExEquipmentPreview(undefined);
     setExDialogOpen(true);
   }
   function openEditEx(i: number) {
-    const ex = rExercises[i];
     setEditingExIndex(i);
-    setExName(ex.name);
-    setExMuscle(ex.muscleGroup);
-    setExSets(String(ex.sets));
-    setExReps(ex.reps);
-    setExWeight(ex.targetWeight === 0 ? "" : String(ex.targetWeight));
-    setExUnit(ex.unit || "kg");
-    setExRest(String(ex.restSeconds));
-    setExEquipmentId(ex.equipmentId);
-    if (ex.equipmentId) {
-      const cat = findCatalogEquipment(ex.equipmentId);
-      if (cat) setExEquipmentPreview(cat);
-      else resolveEquipment(ex.equipmentId).then(setExEquipmentPreview);
-    } else {
-      setExEquipmentPreview(undefined);
-    }
     setExDialogOpen(true);
   }
-  function handleEquipmentSelected(eq: Equipment) {
-    setExEquipmentId(eq.id);
-    setExEquipmentPreview(eq);
-    if (!exName.trim()) setExName(eq.name);
-    if (eq.muscleGroups.length > 0) setExMuscle(eq.muscleGroups[0]);
-    setExUnit(eq.unit);
-  }
-  function saveEx() {
-    if (!exName.trim()) {
-      toast.error("Dale un nombre al ejercicio.");
-      return;
-    }
-    const existing = editingExIndex !== null ? rExercises[editingExIndex] : null;
-    const next: RoutineExercise = {
-      id: existing?.id || generateId(),
-      name: exName.trim(),
-      muscleGroup: exMuscle,
-      sets: parseNumber(exSets, 3),
-      reps: exReps,
-      targetWeight: parseNumber(exWeight, 0),
-      unit: exUnit,
-      restSeconds: parseNumber(exRest, 150),
-      supersetId: existing?.supersetId,
-      equipmentId: exEquipmentId,
-    };
+  function handleExerciseSave(exercise: RoutineExercise) {
     if (editingExIndex !== null) {
       const arr = [...rExercises];
-      arr[editingExIndex] = next;
+      arr[editingExIndex] = exercise;
       setRExercises(arr);
     } else {
-      setRExercises([...rExercises, next]);
+      setRExercises([...rExercises, exercise]);
     }
-    setExDialogOpen(false);
   }
   function removeEx(i: number) {
     setRExercises(rExercises.filter((_, idx) => idx !== i));
@@ -644,160 +559,14 @@ export function AdminBaseRoutinesEditor() {
         </SheetContent>
       </Sheet>
 
-      {/* Exercise dialog */}
-      <Dialog open={exDialogOpen} onOpenChange={setExDialogOpen}>
-        <DialogContent className="sm:max-w-md w-[calc(100%-1.5rem)] rounded-xl max-h-[88dvh] overflow-y-auto">
-          <DialogHeader>
-            <DialogTitle>
-              {editingExIndex !== null ? "Editar ejercicio" : "Nuevo ejercicio"}
-            </DialogTitle>
-          </DialogHeader>
-
-          <div className="flex flex-col gap-4 py-2">
-            <div>
-              <Label className="text-sm font-medium">Nombre</Label>
-              <Input
-                value={exName}
-                onChange={(e) => setExName(e.target.value)}
-                placeholder="Ej: Press banca"
-                className="mt-1 h-11"
-              />
-            </div>
-
-            <div>
-              <Label className="text-sm font-medium">Grupo muscular</Label>
-              <Select value={exMuscle} onValueChange={setExMuscle}>
-                <SelectTrigger className="mt-1 h-11">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {MUSCLE_GROUPS.map((g) => (
-                    <SelectItem key={g} value={g}>
-                      {g}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-
-            <div>
-              <Label className="text-sm font-medium">Equipo</Label>
-              <div className="mt-1 flex items-center gap-2">
-                <Button
-                  type="button"
-                  variant="outline"
-                  className={cn(
-                    "flex-1 justify-start h-11 text-left font-normal truncate",
-                    !exEquipmentPreview && "text-muted-foreground",
-                  )}
-                  onClick={() => setEquipmentPickerOpen(true)}
-                >
-                  <span className="truncate">
-                    {exEquipmentPreview
-                      ? exEquipmentPreview.name
-                      : "Seleccionar equipo (opcional)"}
-                  </span>
-                </Button>
-                {exEquipmentPreview && (
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="icon"
-                    onClick={() => {
-                      setExEquipmentId(undefined);
-                      setExEquipmentPreview(undefined);
-                    }}
-                  >
-                    <Trash2 className="h-4 w-4" />
-                  </Button>
-                )}
-              </div>
-              {exEquipmentPreview && (
-                <p className="text-[10px] text-muted-foreground/70 mt-1">
-                  {EQUIPMENT_TYPE_LABELS[exEquipmentPreview.type] ?? exEquipmentPreview.type}
-                  {" · paso "}
-                  {exEquipmentPreview.increment} {exEquipmentPreview.unit}
-                </p>
-              )}
-            </div>
-
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <Label className="text-xs text-muted-foreground">Series</Label>
-                <Input
-                  type="text"
-                  inputMode="numeric"
-                  value={exSets}
-                  onChange={(e) => setExSets(e.target.value)}
-                  className="mt-1 h-11"
-                  placeholder="3"
-                />
-              </div>
-              <div>
-                <Label className="text-xs text-muted-foreground">Repeticiones</Label>
-                <Input
-                  type="text"
-                  value={exReps}
-                  onChange={(e) => setExReps(e.target.value)}
-                  className="mt-1 h-11"
-                  placeholder="10 o 8-12"
-                />
-              </div>
-            </div>
-
-            <div>
-              <Label className="text-xs text-muted-foreground">Peso objetivo</Label>
-              <div className="flex mt-1 items-center gap-2">
-                <Input
-                  type="text"
-                  inputMode="decimal"
-                  value={exWeight}
-                  onChange={(e) => setExWeight(e.target.value)}
-                  className="h-11 flex-1 min-w-0"
-                  placeholder="0 (opcional)"
-                />
-                <Select value={exUnit} onValueChange={setExUnit}>
-                  <SelectTrigger className="h-11 w-24 shrink-0">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="kg">kg</SelectItem>
-                    <SelectItem value="lb">lb</SelectItem>
-                    <SelectItem value="otro">otro</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-            </div>
-
-            <div>
-              <Label className="text-xs text-muted-foreground">Descanso (segundos)</Label>
-              <Input
-                type="text"
-                inputMode="numeric"
-                value={exRest}
-                onChange={(e) => setExRest(e.target.value)}
-                className="mt-1 h-11"
-                placeholder="150"
-              />
-            </div>
-          </div>
-
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setExDialogOpen(false)}>
-              Cancelar
-            </Button>
-            <Button onClick={saveEx} disabled={!exName.trim()}>
-              {editingExIndex !== null ? "Guardar" : "Agregar"}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      <EquipmentPickerSheet
-        open={equipmentPickerOpen}
-        onOpenChange={setEquipmentPickerOpen}
-        currentEquipmentId={exEquipmentId}
-        onSelect={handleEquipmentSelected}
+      {/* Exercise dialog — shared component (free-form rest input for admin). */}
+      <ExerciseFormDialog
+        open={exDialogOpen}
+        onOpenChange={setExDialogOpen}
+        initial={
+          editingExIndex !== null ? rExercises[editingExIndex] ?? null : null
+        }
+        onSave={handleExerciseSave}
       />
     </div>
   );

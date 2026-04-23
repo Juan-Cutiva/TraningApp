@@ -5,16 +5,17 @@ import { useLiveQuery } from "dexie-react-hooks";
 import {
   db,
   estimateRoutineDuration,
-  resolveEquipment,
   type Routine,
   type RoutineExercise,
-  type Equipment,
 } from "@/lib/db";
+import {
+  ExerciseFormDialog,
+  DEFAULT_REST_PRESETS,
+} from "./exercise-form-dialog";
 import {
   findCatalogEquipment,
   EQUIPMENT_TYPE_LABELS,
 } from "@/lib/equipment-catalog";
-import { EquipmentPickerSheet } from "./equipment-picker-sheet";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -46,7 +47,6 @@ import {
   Trash2,
   Dumbbell,
   ChevronRight,
-  GripVertical,
   ChevronUp,
   ChevronDown,
   Link2,
@@ -59,31 +59,13 @@ import Link from "next/link";
 import { format } from "date-fns";
 import { es } from "date-fns/locale";
 import {
-  cn,
   DAY_NAMES as DAYS,
   DAY_SELECT_OPTIONS,
-  parseNumber,
   generateId,
 } from "@/lib/utils";
 
-// "Sin asignar" no aplica en el editor clasico — se maneja aparte como
-// dayOfWeek=null. Se filtra del listado compartido.
+// "Sin asignar" no aplica en el editor — se maneja aparte como dayOfWeek=null.
 const DAY_OPTIONS = DAY_SELECT_OPTIONS.filter((o) => o.value !== "none");
-
-const MUSCLE_GROUPS = [
-  "Pecho",
-  "Espalda",
-  "Hombros",
-  "Biceps",
-  "Triceps",
-  "Piernas",
-  "Gluteos",
-  "Abdominales",
-  "Trapecio",
-  "Antebrazos",
-  "Pantorrillas",
-  "Full Body",
-];
 
 export function RoutinesContent() {
   const routines = useLiveQuery(() => db.routines.toArray());
@@ -123,20 +105,9 @@ export function RoutinesContent() {
   const [editingExerciseIndex, setEditingExerciseIndex] = useState<
     number | null
   >(null);
-  const [exName, setExName] = useState("");
-  const [exMuscle, setExMuscle] = useState("Pecho");
-  const [exSets, setExSets] = useState<string>("3");
-  const [exReps, setExReps] = useState<string | number>("10");
-  const [exWeight, setExWeight] = useState<string>("0");
-  const [exUnit, setExUnit] = useState<string>("kg");
-  const [exRest, setExRest] = useState<string>("150");
-  const [exEquipmentId, setExEquipmentId] = useState<string | undefined>();
-  const [exEquipmentPreview, setExEquipmentPreview] = useState<
-    Equipment | undefined
-  >();
-
-  // Equipment picker Sheet
-  const [equipmentPickerOpen, setEquipmentPickerOpen] = useState(false);
+  // The per-field exercise form state now lives inside <ExerciseFormDialog>;
+  // we only need to know the index being edited (null = new) to know where
+  // to put the result in the exercises array.
 
   // Snapshot of routine state on sheet open, used to detect unsaved changes
   // when the user tries to close. Stored as JSON string for cheap comparison.
@@ -197,83 +168,15 @@ export function RoutinesContent() {
 
   function openNewExercise() {
     setEditingExerciseIndex(null);
-    setExName("");
-    setExMuscle("Pecho");
-    setExSets("3");
-    setExReps("10");
-    // Peso arranca vacío para que el placeholder "0" sea visible y el user
-    // pueda escribir directamente sin borrar el cero. parseNumber(exWeight, 0)
-    // al guardar convierte "" -> 0 manteniendo la logica previa.
-    setExWeight("");
-    setExUnit("kg");
-    setExRest("150");
-    setExEquipmentId(undefined);
-    setExEquipmentPreview(undefined);
     setExerciseDialogOpen(true);
   }
 
   function openEditExercise(index: number) {
-    const ex = exercises[index];
     setEditingExerciseIndex(index);
-    setExName(ex.name);
-    setExMuscle(ex.muscleGroup);
-    setExSets(String(ex.sets));
-    setExReps(ex.reps);
-    // Si el peso guardado es 0, mostrarlo como placeholder en vez de "0"
-    // para que editar sea tap-y-escribir sin tener que borrar el cero.
-    setExWeight(ex.targetWeight === 0 ? "" : String(ex.targetWeight));
-    setExUnit(ex.unit || "kg");
-    setExRest(String(ex.restSeconds));
-    setExEquipmentId(ex.equipmentId);
-    // Preload preview for the button label (async — doesn't block dialog open)
-    if (ex.equipmentId) {
-      const cat = findCatalogEquipment(ex.equipmentId);
-      if (cat) {
-        setExEquipmentPreview(cat);
-      } else {
-        resolveEquipment(ex.equipmentId).then((eq) =>
-          setExEquipmentPreview(eq),
-        );
-      }
-    } else {
-      setExEquipmentPreview(undefined);
-    }
     setExerciseDialogOpen(true);
   }
 
-  function handleEquipmentSelected(eq: Equipment) {
-    setExEquipmentId(eq.id);
-    setExEquipmentPreview(eq);
-    // Auto-fill fields when the exercise name is empty or looks "default"
-    if (!exName.trim()) setExName(eq.name);
-    if (eq.muscleGroups.length > 0) setExMuscle(eq.muscleGroups[0]);
-    setExUnit(eq.unit);
-  }
-
-  function clearEquipment() {
-    setExEquipmentId(undefined);
-    setExEquipmentPreview(undefined);
-  }
-
-  function saveExercise() {
-    if (!exName.trim()) return;
-
-    const existingExercise =
-      editingExerciseIndex !== null ? exercises[editingExerciseIndex] : null;
-
-    const exercise: RoutineExercise = {
-      id: existingExercise?.id || generateId(),
-      name: exName.trim(),
-      muscleGroup: exMuscle,
-      sets: parseNumber(exSets, 3),
-      reps: exReps,
-      targetWeight: parseNumber(exWeight, 0),
-      unit: exUnit,
-      restSeconds: parseNumber(exRest, 150),
-      supersetId: existingExercise?.supersetId,
-      equipmentId: exEquipmentId,
-    };
-
+  function handleExerciseSave(exercise: RoutineExercise) {
     if (editingExerciseIndex !== null) {
       const updated = [...exercises];
       updated[editingExerciseIndex] = exercise;
@@ -281,7 +184,6 @@ export function RoutinesContent() {
     } else {
       setExercises([...exercises, exercise]);
     }
-    setExerciseDialogOpen(false);
   }
 
   function removeExercise(index: number) {
@@ -713,208 +615,18 @@ export function RoutinesContent() {
         </SheetContent>
       </Sheet>
 
-      {/* Exercise Dialog */}
-      <Dialog open={exerciseDialogOpen} onOpenChange={setExerciseDialogOpen}>
-        <DialogContent className="max-w-[calc(100%-2rem)] rounded-xl">
-          <DialogHeader>
-            <DialogTitle className="text-lg">
-              {editingExerciseIndex !== null
-                ? "Editar Ejercicio"
-                : "Nuevo Ejercicio"}
-            </DialogTitle>
-          </DialogHeader>
-
-          <div className="flex flex-col gap-4 py-2">
-            <datalist id="exercise-suggestions">
-              {exerciseSuggestions?.map((name) => (
-                <option key={name} value={name} />
-              ))}
-            </datalist>
-            <div>
-              <Label className="text-sm font-medium">
-                Nombre del ejercicio
-              </Label>
-              <Input
-                value={exName}
-                onChange={(e) => setExName(e.target.value)}
-                placeholder="Ej: Press banca, Sentadilla..."
-                className="mt-1 h-11"
-                list="exercise-suggestions"
-                autoComplete="off"
-              />
-            </div>
-
-            <div>
-              <Label className="text-sm font-medium">Grupo muscular</Label>
-              <Select value={exMuscle} onValueChange={setExMuscle}>
-                <SelectTrigger className="mt-1 h-11">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {MUSCLE_GROUPS.map((g) => (
-                    <SelectItem key={g} value={g}>
-                      {g}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-
-            {/* Equipment picker — tapping opens the full-screen sheet.
-                Used by the RPE engine to respect real increments. */}
-            <div>
-              <Label className="text-sm font-medium">Equipo</Label>
-              <div className="mt-1 flex items-center gap-2">
-                <Button
-                  type="button"
-                  variant="outline"
-                  className={cn(
-                    "flex-1 justify-between h-11 text-left font-normal",
-                    !exEquipmentPreview && "text-muted-foreground",
-                  )}
-                  onClick={() => setEquipmentPickerOpen(true)}
-                >
-                  <span className="truncate">
-                    {exEquipmentPreview
-                      ? exEquipmentPreview.name
-                      : "Seleccionar equipo (opcional)"}
-                  </span>
-                  <ChevronRight className="h-4 w-4 shrink-0 opacity-50" />
-                </Button>
-                {exEquipmentPreview && (
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="icon"
-                    onClick={clearEquipment}
-                    aria-label="Quitar equipo"
-                    className="h-11 w-11 text-muted-foreground"
-                  >
-                    <Trash2 className="h-4 w-4" />
-                  </Button>
-                )}
-              </div>
-              {exEquipmentPreview && (
-                <p className="text-[10px] text-muted-foreground/70 mt-1">
-                  {EQUIPMENT_TYPE_LABELS[exEquipmentPreview.type] ??
-                    exEquipmentPreview.type}
-                  {" · paso "}
-                  {exEquipmentPreview.increment} {exEquipmentPreview.unit}
-                  {exEquipmentPreview.microIncrement
-                    ? ` (micro ${exEquipmentPreview.microIncrement})`
-                    : ""}
-                </p>
-              )}
-            </div>
-
-            {/* Series y reps en una fila, peso en su propia fila para dar
-                espacio al input + unit select en mobile. En el layout anterior
-                (3 columnas en pantallas chicas) el peso quedaba de ~60px y no
-                se veian los numeros ingresados. */}
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <Label className="text-xs text-muted-foreground">Series</Label>
-                <Input
-                  type="text"
-                  inputMode="numeric"
-                  value={exSets}
-                  onChange={(e) => setExSets(e.target.value)}
-                  className="mt-1 h-11"
-                  placeholder="3"
-                />
-              </div>
-              <div>
-                <Label className="text-xs text-muted-foreground">
-                  Repeticiones
-                </Label>
-                <Input
-                  type="text"
-                  value={exReps}
-                  onChange={(e) => setExReps(e.target.value)}
-                  className="mt-1 h-11"
-                  placeholder="10 o 8-12"
-                />
-              </div>
-            </div>
-            <div>
-              <Label className="text-xs text-muted-foreground">Peso</Label>
-              <div className="flex mt-1 items-center gap-2">
-                <Input
-                  type="text"
-                  inputMode="decimal"
-                  value={exWeight}
-                  onChange={(e) => setExWeight(e.target.value)}
-                  className="h-11 flex-1 min-w-0"
-                  placeholder="0 (opcional)"
-                />
-                <Select value={exUnit} onValueChange={setExUnit}>
-                  <SelectTrigger className="h-11 w-24 shrink-0">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="kg">kg</SelectItem>
-                    <SelectItem value="lb">lb</SelectItem>
-                    <SelectItem value="otro">otro</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-              <p className="text-[10px] text-muted-foreground/70 mt-1">
-                Dejalo vacío si el peso dependerá de tu progreso — al entrenar
-                se precarga con el peso de la última sesión.
-              </p>
-            </div>
-
-            <div>
-              <Label className="text-sm font-medium">Descanso (segundos)</Label>
-              <Select
-                value={String(exRest)}
-                onValueChange={(v) => setExRest(v)}
-              >
-                <SelectTrigger className="mt-1 h-11">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="10">10s (10 seg)</SelectItem>
-                  <SelectItem value="15">15s (15 seg)</SelectItem>
-                  <SelectItem value="30">30s (30 seg)</SelectItem>
-                  <SelectItem value="60">60s (1 min)</SelectItem>
-                  <SelectItem value="90">90s (1.5 min)</SelectItem>
-                  <SelectItem value="120">120s (2 min)</SelectItem>
-                  <SelectItem value="150">150s (2.5 min)</SelectItem>
-                  <SelectItem value="180">180s (3 min)</SelectItem>
-                  <SelectItem value="240">240s (4 min)</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-          </div>
-
-          <DialogFooter>
-            <Button
-              variant="outline"
-              onClick={() => setExerciseDialogOpen(false)}
-              className="h-11"
-            >
-              Cancelar
-            </Button>
-            <Button
-              onClick={saveExercise}
-              disabled={!exName.trim()}
-              className="h-11 px-6"
-            >
-              {editingExerciseIndex !== null ? "Guardar" : "Agregar"}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      {/* Equipment picker — full-screen Sheet. Opens over the exercise
-          dialog so the user picks equipment without losing the in-progress
-          form state. */}
-      <EquipmentPickerSheet
-        open={equipmentPickerOpen}
-        onOpenChange={setEquipmentPickerOpen}
-        currentEquipmentId={exEquipmentId}
-        onSelect={handleEquipmentSelected}
+      {/* Exercise Dialog — shared component with its own equipment picker. */}
+      <ExerciseFormDialog
+        open={exerciseDialogOpen}
+        onOpenChange={setExerciseDialogOpen}
+        initial={
+          editingExerciseIndex !== null
+            ? exercises[editingExerciseIndex] ?? null
+            : null
+        }
+        onSave={handleExerciseSave}
+        nameSuggestions={exerciseSuggestions}
+        restPresets={DEFAULT_REST_PRESETS}
       />
     </div>
   );
