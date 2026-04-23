@@ -10,7 +10,10 @@ import {
   type RoutineExercise,
   type Equipment,
 } from "@/lib/db";
-import { findCatalogEquipment, EQUIPMENT_TYPE_LABELS } from "@/lib/equipment-catalog";
+import {
+  findCatalogEquipment,
+  EQUIPMENT_TYPE_LABELS,
+} from "@/lib/equipment-catalog";
 import { EquipmentPickerSheet } from "./equipment-picker-sheet";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -124,7 +127,9 @@ export function RoutinesContent() {
       .where("routineId")
       .equals(historyRoutineId)
       .toArray();
-    logs.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+    logs.sort(
+      (a, b) => new Date(b.date).getTime() - new Date(a.date).getTime(),
+    );
     return logs.slice(0, 10);
   }, [historyRoutineId]);
 
@@ -148,7 +153,9 @@ export function RoutinesContent() {
   const [exUnit, setExUnit] = useState<string>("kg");
   const [exRest, setExRest] = useState<string>("150");
   const [exEquipmentId, setExEquipmentId] = useState<string | undefined>();
-  const [exEquipmentPreview, setExEquipmentPreview] = useState<Equipment | undefined>();
+  const [exEquipmentPreview, setExEquipmentPreview] = useState<
+    Equipment | undefined
+  >();
 
   // Equipment picker Sheet
   const [equipmentPickerOpen, setEquipmentPickerOpen] = useState(false);
@@ -179,7 +186,10 @@ export function RoutinesContent() {
     setExMuscle("Pecho");
     setExSets("3");
     setExReps("10");
-    setExWeight("0");
+    // Peso arranca vacío para que el placeholder "0" sea visible y el user
+    // pueda escribir directamente sin borrar el cero. parseNumber(exWeight, 0)
+    // al guardar convierte "" -> 0 manteniendo la logica previa.
+    setExWeight("");
     setExUnit("kg");
     setExRest("150");
     setExEquipmentId(undefined);
@@ -194,7 +204,9 @@ export function RoutinesContent() {
     setExMuscle(ex.muscleGroup);
     setExSets(String(ex.sets));
     setExReps(ex.reps);
-    setExWeight(String(ex.targetWeight));
+    // Si el peso guardado es 0, mostrarlo como placeholder en vez de "0"
+    // para que editar sea tap-y-escribir sin tener que borrar el cero.
+    setExWeight(ex.targetWeight === 0 ? "" : String(ex.targetWeight));
     setExUnit(ex.unit || "kg");
     setExRest(String(ex.restSeconds));
     setExEquipmentId(ex.equipmentId);
@@ -204,7 +216,9 @@ export function RoutinesContent() {
       if (cat) {
         setExEquipmentPreview(cat);
       } else {
-        resolveEquipment(ex.equipmentId).then((eq) => setExEquipmentPreview(eq));
+        resolveEquipment(ex.equipmentId).then((eq) =>
+          setExEquipmentPreview(eq),
+        );
       }
     } else {
       setExEquipmentPreview(undefined);
@@ -435,7 +449,9 @@ export function RoutinesContent() {
       {/* History Dialog */}
       <Dialog
         open={historyRoutineId !== null}
-        onOpenChange={(open) => { if (!open) setHistoryRoutineId(null); }}
+        onOpenChange={(open) => {
+          if (!open) setHistoryRoutineId(null);
+        }}
       >
         <DialogContent className="max-w-sm rounded-2xl max-h-[80dvh] flex flex-col">
           <DialogHeader>
@@ -466,7 +482,9 @@ export function RoutinesContent() {
                   >
                     <div className="flex items-center justify-between">
                       <p className="text-sm font-semibold text-foreground">
-                        {format(new Date(log.date), "d MMM yyyy", { locale: es })}
+                        {format(new Date(log.date), "d MMM yyyy", {
+                          locale: es,
+                        })}
                       </p>
                       {log.completed && (
                         <span className="text-[10px] font-bold text-green-400 bg-green-500/10 border border-green-500/20 rounded-full px-2 py-0.5">
@@ -617,9 +635,10 @@ export function RoutinesContent() {
                               {ex.equipmentId && (
                                 <span className="text-[10px] font-semibold bg-muted text-muted-foreground px-1.5 py-0.5 rounded">
                                   {findCatalogEquipment(ex.equipmentId)?.name
-                                    ? EQUIPMENT_TYPE_LABELS[
-                                        findCatalogEquipment(ex.equipmentId)!.type
-                                      ] ?? "Equipo"
+                                    ? (EQUIPMENT_TYPE_LABELS[
+                                        findCatalogEquipment(ex.equipmentId)!
+                                          .type
+                                      ] ?? "Equipo")
                                     : "Equipo"}
                                 </span>
                               )}
@@ -762,7 +781,8 @@ export function RoutinesContent() {
               </div>
               {exEquipmentPreview && (
                 <p className="text-[10px] text-muted-foreground/70 mt-1">
-                  {EQUIPMENT_TYPE_LABELS[exEquipmentPreview.type] ?? exEquipmentPreview.type}
+                  {EQUIPMENT_TYPE_LABELS[exEquipmentPreview.type] ??
+                    exEquipmentPreview.type}
                   {" · paso "}
                   {exEquipmentPreview.increment} {exEquipmentPreview.unit}
                   {exEquipmentPreview.microIncrement
@@ -772,7 +792,11 @@ export function RoutinesContent() {
               )}
             </div>
 
-            <div className="grid grid-cols-3 gap-3">
+            {/* Series y reps en una fila, peso en su propia fila para dar
+                espacio al input + unit select en mobile. En el layout anterior
+                (3 columnas en pantallas chicas) el peso quedaba de ~60px y no
+                se veian los numeros ingresados. */}
+            <div className="grid grid-cols-2 gap-3">
               <div>
                 <Label className="text-xs text-muted-foreground">Series</Label>
                 <Input
@@ -796,31 +820,33 @@ export function RoutinesContent() {
                   placeholder="10 o 8-12"
                 />
               </div>
-              <div>
-                <Label className="text-xs text-muted-foreground">
-                  Peso
-                </Label>
-                <div className="flex mt-1 items-center gap-1">
-                  <Input
-                    type="text"
-                    inputMode="decimal"
-                    value={exWeight}
-                    onChange={(e) => setExWeight(e.target.value)}
-                    className="h-11 flex-1"
-                    placeholder="0"
-                  />
-                  <Select value={exUnit} onValueChange={setExUnit}>
-                    <SelectTrigger className="h-11 w-20 shrink-0">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="kg">kg</SelectItem>
-                      <SelectItem value="lb">lb</SelectItem>
-                      <SelectItem value="otro">otro</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
+            </div>
+            <div>
+              <Label className="text-xs text-muted-foreground">Peso</Label>
+              <div className="flex mt-1 items-center gap-2">
+                <Input
+                  type="text"
+                  inputMode="decimal"
+                  value={exWeight}
+                  onChange={(e) => setExWeight(e.target.value)}
+                  className="h-11 flex-1 min-w-0"
+                  placeholder="0 (opcional)"
+                />
+                <Select value={exUnit} onValueChange={setExUnit}>
+                  <SelectTrigger className="h-11 w-24 shrink-0">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="kg">kg</SelectItem>
+                    <SelectItem value="lb">lb</SelectItem>
+                    <SelectItem value="otro">otro</SelectItem>
+                  </SelectContent>
+                </Select>
               </div>
+              <p className="text-[10px] text-muted-foreground/70 mt-1">
+                Dejalo vacío si el peso dependerá de tu progreso — al entrenar
+                se precarga con el peso de la última sesión.
+              </p>
             </div>
 
             <div>

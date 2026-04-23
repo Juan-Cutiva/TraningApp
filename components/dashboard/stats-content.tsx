@@ -235,14 +235,18 @@ export function StatsContent() {
       .map(([name, value]) => ({ name, value }))
       .sort((a, b) => b.value - a.value);
 
-    // Muscle distribution — PLANNED per week according to assigned routines.
-    // Deduplicates by dayOfWeek so two routines on the same day count once.
+    // Muscle distribution — PLANNED per week according to saved routines.
+    // Incluye TODAS las rutinas con ejercicios, incluso las que no tienen
+    // dayOfWeek asignado (el planificador debe aparecer apenas haya al menos
+    // una rutina establecida). Las que sí tienen dayOfWeek se deduplican por
+    // día para no sumar dos rutinas del mismo día.
     const planned: Record<string, number> = {};
     const seenDays = new Set<number>();
     (routines ?? []).forEach((r) => {
-      if (r.dayOfWeek === null || r.dayOfWeek === undefined) return;
-      if (seenDays.has(r.dayOfWeek)) return;
-      seenDays.add(r.dayOfWeek);
+      if (r.dayOfWeek !== null && r.dayOfWeek !== undefined) {
+        if (seenDays.has(r.dayOfWeek)) return;
+        seenDays.add(r.dayOfWeek);
+      }
       r.exercises.forEach((ex) => {
         const group = ex.muscleGroup || "Otros";
         planned[group] = (planned[group] || 0) + (ex.sets || 0);
@@ -522,20 +526,22 @@ export function StatsContent() {
             </Card>
           ) : (
             <>
-              {/* Planificado por rutina */}
+              {/* Planificado por rutina — se muestra apenas haya al menos
+                  una rutina con ejercicios, con o sin día asignado. */}
               <Card>
                 <CardHeader className="p-4 pb-2">
                   <CardTitle className="text-sm">
                     Planificado por semana
                   </CardTitle>
                   <p className="text-xs text-muted-foreground mt-0.5">
-                    Series prescritas en tus rutinas asignadas (un día de la semana = una vez).
+                    Series prescritas en tus rutinas. Rutinas con el mismo día
+                    cuentan una vez por semana.
                   </p>
                 </CardHeader>
                 <CardContent className="p-4 pt-0">
                   {stats.musclePlannedWeek.length === 0 ? (
                     <p className="text-xs text-muted-foreground py-4 text-center">
-                      No hay rutinas con día asignado. Asigna un día a cada rutina para ver este gráfico.
+                      Crea al menos una rutina para ver este gráfico.
                     </p>
                   ) : (
                     <div className="space-y-3 mt-2">

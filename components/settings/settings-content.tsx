@@ -109,13 +109,16 @@ export function SettingsContent() {
   async function handleExport() {
     try {
       const data = {
-        version: 1,
+        version: 2,
         exportDate: new Date().toISOString(),
         routines: await db.routines.toArray(),
         workoutLogs: await db.workoutLogs.toArray(),
         personalRecords: await db.personalRecords.toArray(),
         goals: await db.goals.toArray(),
         userSettings: await db.userSettings.toArray(),
+        bodyWeight: await db.bodyWeight.toArray(),
+        weightGoals: await db.weightGoals.toArray(),
+        customEquipment: await db.customEquipment.toArray(),
       };
       const blob = new Blob([JSON.stringify(data, null, 2)], {
         type: "application/json",
@@ -150,11 +153,16 @@ export function SettingsContent() {
         return;
       }
 
+      // Clear all tables including the ones added after v1 (bodyWeight,
+      // weightGoals, customEquipment) so the restore is idempotent.
       await db.routines.clear();
       await db.workoutLogs.clear();
       await db.personalRecords.clear();
       await db.goals.clear();
       await db.userSettings.clear();
+      await db.bodyWeight.clear();
+      await db.weightGoals.clear();
+      await db.customEquipment.clear();
 
       if (data.routines?.length) await db.routines.bulkAdd(data.routines);
       if (data.workoutLogs?.length)
@@ -164,6 +172,12 @@ export function SettingsContent() {
       if (data.goals?.length) await db.goals.bulkAdd(data.goals);
       if (data.userSettings?.length)
         await db.userSettings.bulkAdd(data.userSettings);
+      // v2+ backups include body weight, weight goals and custom equipment.
+      if (data.bodyWeight?.length) await db.bodyWeight.bulkAdd(data.bodyWeight);
+      if (data.weightGoals?.length)
+        await db.weightGoals.bulkAdd(data.weightGoals);
+      if (data.customEquipment?.length)
+        await db.customEquipment.bulkAdd(data.customEquipment);
 
       setImportStatus("Importado correctamente");
       setTimeout(() => setImportStatus(null), 3000);
@@ -207,7 +221,9 @@ export function SettingsContent() {
       return;
     if (!confirm("¿Confirmar eliminación total de datos?")) return;
 
-    // Clear all tables except users (preserve login credentials)
+    // Clear all tables except users (preserve login credentials).
+    // customEquipment es tabla nueva (Dexie v4) — incluirla para que el
+    // "Eliminar todos los datos" sea realmente completo.
     await db.routines.clear();
     await db.workoutLogs.clear();
     await db.personalRecords.clear();
@@ -215,6 +231,7 @@ export function SettingsContent() {
     await db.userSettings.clear();
     await db.bodyWeight.clear();
     await db.weightGoals.clear();
+    await db.customEquipment.clear();
 
     // Reload the page to reset the app state
     window.location.reload();
