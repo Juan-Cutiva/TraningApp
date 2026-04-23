@@ -201,8 +201,9 @@ function analyzeFailurePosition(ratedSets: { rpe?: RPEValue }[]): FailureProfile
   const total = ratedSets.length;
   return {
     count,
-    // v5: Only set 1 failure is "early" — set 2 failure is expected fatigue
-    firstSetFailure: count > 0 && total >= 3 && failureIndices[0] === 0,
+    // Set 1 failure (with 2+ total sets) = weight genuinely too heavy.
+    // Set 2+ failure = expected accumulated fatigue (Helms 2016).
+    firstSetFailure: count > 0 && total >= 2 && failureIndices[0] === 0,
     onlyLastSetFailure: count === 1 && failureIndices[0] === total - 1,
     firstFailurePosition: count > 0 ? failureIndices[0] + 1 : 0,
     failureRate: total > 0 ? count / total : 0,
@@ -370,9 +371,10 @@ function hasCatastrophicJump(values: number[]): boolean {
 
 // ─── Rep completion helpers ───────────────────────────────────────────────────
 
-/** Parse actual reps from a set (handles string input) */
+/** Parse actual reps from a set (accepts decimals for partial reps, e.g. "7.5") */
 function parseActualReps(reps: string | number): number {
-  return parseInt(String(reps), 10) || 0;
+  if (typeof reps === "number") return reps;
+  return parseFloat(String(reps).replace(",", ".")) || 0;
 }
 
 /**
@@ -578,8 +580,10 @@ export function getRPERecommendation(
   // ─────────────────────────────────────────────────────────────────────────
   // CATASTROPHIC JUMP DETECTION
   // If RPE spikes > 3 pts between any adjacent sets, weight selection is poor.
+  // Triggers on either 2+ hard/failure sets OR a single failure (a clean jump
+  // from easy to failure by itself signals severe miscalibration).
   // ─────────────────────────────────────────────────────────────────────────
-  if (catastrophicJump && hardOrFail >= 2) {
+  if (catastrophicJump && (hardOrFail >= 2 || failureCount >= 1)) {
     return {
       type: "decrease_weight_small",
       weightDelta: -increments.small, repsDelta: 0,
@@ -812,8 +816,10 @@ export function getRPERecommendation(
     }
 
     // ── Rep range prescription (double progression Phase 1)
-    // Not at ceiling yet — build reps before weight
-    if (!rapidEscalation || rpeValues[rpeValues.length - 1] <= 8.5) {
+    // Not at ceiling yet — build reps before weight. The rich messaging is
+    // used when the pacing looks healthy; otherwise fall through to the
+    // terser variant.
+    if (!rapidEscalation && rpeValues[rpeValues.length - 1] <= 8.5) {
       const repsBeforeCeiling = repRange.max - Math.round(repRatio * repRange.max);
       const repsText = repsBeforeCeiling > 1
         ? `Aún te faltan ~${repsBeforeCeiling} reps para llegar al techo de ${repRange.max}.`
@@ -832,7 +838,7 @@ export function getRPERecommendation(
       type: "maintain_increase_reps",
       weightDelta: 0, repsDelta: 1,
       headline: "Mantén la carga y acumula +1 rep",
-      detail: `Buen estímulo (RPE ${wAvgRpe.toFixed(1)}). Antes de subir peso, llega a ${repRange.max} reps en todas las series con esta misma carga.`,
+      detail: `Buen estímulo (RPE ${wAvgRpe.toFixed(1)}) con escalada rápida entre series. Antes de subir peso, llega a ${repRange.max} reps en todas las series con esta misma carga.`,
       color: "blue", emoji: "📊",
     };
   }

@@ -44,6 +44,7 @@ import {
   Share2,
   NotebookPen,
   ClipboardCheck,
+  Zap,
 } from "lucide-react";
 import { toast } from "sonner";
 import { format } from "date-fns";
@@ -135,6 +136,11 @@ export function WorkoutMode({ routineId }: { routineId: number }) {
   // Confirm exit (Salir button)
   const [isExitConfirmOpen, setIsExitConfirmOpen] = useState(false);
 
+  // Last-session recommendation tip — `tipOpenFor` holds the exercise name whose
+  // rayo card is currently visible (or null). Auto-opens on entering an
+  // exercise with zero completed sets, auto-closes on first set complete.
+  const [tipOpenFor, setTipOpenFor] = useState<string | null>(null);
+
   // Save Weight Dialog
   const [isSaveWeightOpen, setIsSaveWeightOpen] = useState(false);
   const [manualWeight, setManualWeight] = useState("");
@@ -142,8 +148,40 @@ export function WorkoutMode({ routineId }: { routineId: number }) {
 
   // Pesos de la última sesión por ejercicio (para sugerencia de progresión)
   const lastWeightsRef = useRef<Map<string, number>>(new Map());
-  // Recomendaciones del último entreno por ejercicio
-  const lastRecsRef = useRef<Map<string, { headline: string; detail: string; emoji: string; color: string }>>(new Map());
+  // Recomendaciones del último entreno por ejercicio (incluye weightDelta para
+  // aplicar al peso sugerido de la próxima sesión)
+  const lastRecsRef = useRef<
+    Map<
+      string,
+      {
+        headline: string;
+        detail: string;
+        emoji: string;
+        color: string;
+        weightDelta?: number;
+        repsDelta?: number;
+      }
+    >
+  >(new Map());
+
+  /**
+   * Rounds a weight to the nearest 0.25 kg (or 0.5 lbs). This matches the
+   * granularity of typical increments and avoids awkward numbers like 52.63.
+   */
+  function roundSuggestedWeight(w: number): number {
+    return Math.round(w * 4) / 4;
+  }
+
+  /**
+   * Suggested weight = last recorded weight + last session's weightDelta (if any).
+   * Capped at zero so negative deltas can't produce a negative prefill when last weight is low.
+   */
+  function suggestedWeightFor(exerciseName: string, fallbackWeight: number): number {
+    const last = lastWeightsRef.current.get(exerciseName) ?? 0;
+    if (last <= 0) return fallbackWeight;
+    const delta = lastRecsRef.current.get(exerciseName)?.weightDelta ?? 0;
+    return Math.max(0, roundSuggestedWeight(last + delta));
+  }
 
   // Inicializar logs desde la rutina (solo pesos del historial, sin sesión guardada).
   // Reps start empty so the routine's target shows as a placeholder — user types
@@ -171,12 +209,21 @@ export function WorkoutMode({ routineId }: { routineId: number }) {
     ]).then(([weights, recs]) => {
       weights.forEach((w, i) => {
         if (w > 0) {
-          initLogs[i].sets.forEach((s) => { s.weight = w; });
           lastWeightsRef.current.set(r.exercises[i].name, w);
         }
       });
       recs.forEach((rec, i) => {
         if (rec) lastRecsRef.current.set(r.exercises[i].name, rec);
+      });
+      // Apply weight suggestion (last + recommendation delta) to each exercise's sets.
+      // This is the pre-fill the user sees in set rows on session start.
+      r.exercises.forEach((ex, i) => {
+        const suggested = suggestedWeightFor(ex.name, ex.targetWeight);
+        if (suggested > 0) {
+          initLogs[i].sets.forEach((s) => {
+            s.weight = suggested;
+          });
+        }
       });
       setExerciseLogs([...initLogs]);
     });
@@ -236,6 +283,54 @@ export function WorkoutMode({ routineId }: { routineId: number }) {
       }
     }
   }, [currentExIndex, routine]);
+
+  // Rayo tip visibility rules:
+  //   - On entering an exercise fresh (no completed sets) with a rec → auto-open once.
+  //   - Once any set is completed in that exercise → auto-close.
+  //   - After auto-close, the user can re-open via the rayo button (no auto-reopen).
+  //   - On navigating away, always close.
+  // `primedTipExIdx` tracks "we've already set the initial visibility for this
+  // exercise index" so typing reps or other state churn doesn't reopen the tip.
+  const primedTipExIdx = useRef<number>(-1);
+  useEffect(() => {
+    if (currentGroup.length !== 1) {
+      setTipOpenFor(null);
+      primedTipExIdx.current = -1;
+      return;
+    }
+    const log = currentGroup[0]?.log;
+    if (!log) return;
+    const rec = lastRecsRef.current.get(log.exerciseName);
+    const hasAnyCompleted = log.sets.some((s) => s.completed);
+
+    if (primedTipExIdx.current !== currentExIndex) {
+      primedTipExIdx.current = currentExIndex;
+      setTipOpenFor(rec && !hasAnyCompleted ? log.exerciseName : null);
+      return;
+    }
+
+    // Already primed for this index — only act on the first-completion transition.
+    if (hasAnyCompleted && tipOpenFor === log.exerciseName) {
+      setTipOpenFor(null);
+    }
+  }, [currentExIndex, currentGroup, exerciseLogs, tipOpenFor]);
+
+  // Click-outside to close the tip. Uses pointerdown so it fires before the
+  // rayo button's onClick — ignore clicks inside the tip card or the rayo itself.
+  const tipCardRef = useRef<HTMLDivElement>(null);
+  const tipButtonRef = useRef<HTMLButtonElement>(null);
+  useEffect(() => {
+    if (!tipOpenFor) return;
+    function onPointerDown(e: PointerEvent) {
+      const t = e.target as Node | null;
+      if (!t) return;
+      if (tipCardRef.current?.contains(t)) return;
+      if (tipButtonRef.current?.contains(t)) return;
+      setTipOpenFor(null);
+    }
+    document.addEventListener("pointerdown", onPointerDown);
+    return () => document.removeEventListener("pointerdown", onPointerDown);
+  }, [tipOpenFor]);
 
   // Helper to group exercises for pre-start view
   const preStartGroups = useMemo(() => {
@@ -570,7 +665,17 @@ export function WorkoutMode({ routineId }: { routineId: number }) {
       }));
       const rec = getRPERecommendation(exLog.muscleGroup ?? "", exLog.exerciseName ?? "", setsForEngine);
       if (rec) {
-        return { ...exLog, lastRecommendation: { headline: rec.headline, detail: rec.detail, emoji: rec.emoji, color: rec.color } };
+        return {
+          ...exLog,
+          lastRecommendation: {
+            headline: rec.headline,
+            detail: rec.detail,
+            emoji: rec.emoji,
+            color: rec.color,
+            weightDelta: rec.weightDelta,
+            repsDelta: rec.repsDelta,
+          },
+        };
       }
       return exLog;
     });
@@ -1079,30 +1184,84 @@ ${exerciseLines}
               </p>
               {(() => {
                 const exName = currentGroup[0]?.log.exerciseName;
-                const last = exName ? lastWeightsRef.current.get(exName) : undefined;
+                if (!exName) return null;
+                const last = lastWeightsRef.current.get(exName);
                 if (!last) return null;
                 const unit = currentGroup[0]?.log.sets[0]?.unit ?? "kg";
+                const suggested = suggestedWeightFor(exName, last);
+                const rec = lastRecsRef.current.get(exName);
+                const tipOpen = tipOpenFor === exName;
+                const canToggle = !!rec;
                 return (
-                  <p className="text-xs text-muted-foreground/70 mt-0.5">
-                    Última: {last} {unit} · Sugerido: {Math.round((last + 2.5) * 10) / 10} {unit}
-                  </p>
-                );
-              })()}
-              {(() => {
-                const exName = currentGroup[0]?.log.exerciseName;
-                const allDone = currentGroup[0]?.log.sets.every((s) => s.completed);
-                if (allDone) return null; // Don't show last rec if current exercise is done (show live rec instead)
-                const rec = exName ? lastRecsRef.current.get(exName) : undefined;
-                if (!rec) return null;
-                return (
-                  <div className={cn(
-                    "mt-1.5 rounded-lg border px-2.5 py-1.5 text-left max-w-[260px]",
-                    RECOMMENDATION_COLORS[rec.color as keyof typeof RECOMMENDATION_COLORS] || RECOMMENDATION_COLORS.blue,
-                  )}>
-                    <p className="text-[10px] font-semibold leading-tight">
-                      {rec.emoji} Último entreno: {rec.headline}
+                  <>
+                    <p className="text-xs text-muted-foreground/70 mt-0.5 flex items-center gap-2 justify-center">
+                      <span>
+                        Última: {last} {unit}
+                        {suggested !== last && (
+                          <>
+                            {" · Sugerido: "}
+                            <span className="font-semibold text-foreground/80">
+                              {suggested} {unit}
+                            </span>
+                          </>
+                        )}
+                      </span>
+                      {canToggle && (
+                        <button
+                          ref={tipButtonRef}
+                          type="button"
+                          onClick={() => setTipOpenFor((curr) => (curr === exName ? null : exName))}
+                          aria-label={tipOpen ? "Ocultar tip" : "Ver tip del último entreno"}
+                          aria-expanded={tipOpen}
+                          className={cn(
+                            "inline-flex h-6 w-6 items-center justify-center rounded-full border transition-colors shrink-0",
+                            tipOpen
+                              ? "border-primary bg-primary/20 text-primary"
+                              : "border-primary/40 bg-primary/10 text-primary hover:bg-primary/20",
+                          )}
+                        >
+                          <Zap className="h-3 w-3" aria-hidden="true" />
+                        </button>
+                      )}
                     </p>
-                  </div>
+                    {tipOpen && rec && (
+                      <div
+                        ref={tipCardRef}
+                        role="dialog"
+                        aria-label="Recomendación del último entrenamiento"
+                        className={cn(
+                          "relative mt-2 w-[min(280px,calc(100vw-2rem))] rounded-xl border p-3 text-left shadow-lg animate-in fade-in zoom-in-95 slide-in-from-top-1",
+                          RECOMMENDATION_COLORS[rec.color as keyof typeof RECOMMENDATION_COLORS] ||
+                            RECOMMENDATION_COLORS.blue,
+                        )}
+                      >
+                        <div className="flex items-start gap-2">
+                          <span className="text-lg leading-none mt-0.5" aria-hidden="true">
+                            {rec.emoji}
+                          </span>
+                          <div className="flex-1 min-w-0">
+                            <p className="text-[11px] font-bold uppercase tracking-wider opacity-70">
+                              Último entreno
+                            </p>
+                            <p className="text-sm font-bold leading-tight mt-0.5">
+                              {rec.headline}
+                            </p>
+                            <p className="text-xs leading-snug mt-1 opacity-80">
+                              {rec.detail}
+                            </p>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => setTipOpenFor(null)}
+                            aria-label="Cerrar tip"
+                            className="shrink-0 rounded-md p-0.5 opacity-60 hover:opacity-100"
+                          >
+                            <X className="h-3.5 w-3.5" aria-hidden="true" />
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                  </>
                 );
               })()}
               <Button

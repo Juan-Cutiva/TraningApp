@@ -48,6 +48,10 @@ export interface WorkoutExerciseLog {
     detail: string;
     emoji: string;
     color: string;
+    /** Weight change (in the exercise's unit) suggested for the next session. */
+    weightDelta?: number;
+    /** Rep change suggested for the next session (independent of weight). */
+    repsDelta?: number;
   };
 }
 
