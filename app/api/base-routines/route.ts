@@ -65,34 +65,137 @@ export async function GET() {
 // ─── POST — admin updates the base routines template ─────────────────────────
 
 interface IncomingRoutine {
-  name: unknown;
-  dayOfWeek: unknown;
-  exercises: unknown;
+  name: string;
+  dayOfWeek: number | null;
+  exercises: IncomingExercise[];
 }
 
-function validateRoutines(payload: unknown): { ok: true; value: IncomingRoutine[] } | { ok: false; error: string } {
+interface IncomingExercise {
+  id: string;
+  name: string;
+  muscleGroup: string;
+  sets: number;
+  reps: number | string;
+  targetWeight: number;
+  unit: string;
+  restSeconds: number;
+  supersetId?: string;
+  equipmentId?: string;
+}
+
+/**
+ * Strip keys we don't expect, bound lengths, and reject anything that could
+ * be misused. React escapes by default when rendering strings, so this is
+ * defense-in-depth against unexpected sinks (PDF export, share text, etc.)
+ * rather than a strict XSS filter.
+ */
+const NAME_MAX = 120;
+const VALID_UNITS = new Set(["kg", "lb", "lbs", "otro"]);
+
+function sanitizeString(v: unknown, maxLen: number): string | null {
+  if (typeof v !== "string") return null;
+  const trimmed = v.trim();
+  if (trimmed.length === 0 || trimmed.length > maxLen) return null;
+  // Reject strings that look like HTML/script to harden any sink that
+  // might not escape (PDF exports, share text, etc).
+  if (/[<>]/.test(trimmed)) return null;
+  return trimmed;
+}
+
+function sanitizeNumber(v: unknown, min: number, max: number): number | null {
+  if (typeof v !== "number" || !Number.isFinite(v)) return null;
+  if (v < min || v > max) return null;
+  return v;
+}
+
+function validateRoutines(
+  payload: unknown,
+): { ok: true; value: IncomingRoutine[] } | { ok: false; error: string } {
   if (!Array.isArray(payload)) {
     return { ok: false, error: "El payload debe ser un array de rutinas." };
   }
   if (payload.length === 0) {
     return { ok: false, error: "Debe haber al menos una rutina." };
   }
+  if (payload.length > 50) {
+    return { ok: false, error: "Demasiadas rutinas (máx 50)." };
+  }
+
+  const out: IncomingRoutine[] = [];
   for (let i = 0; i < payload.length; i++) {
-    const r = payload[i] as IncomingRoutine;
-    if (typeof r?.name !== "string" || !r.name.trim()) {
-      return { ok: false, error: `Rutina #${i + 1}: nombre inválido.` };
+    const r = payload[i] as Record<string, unknown>;
+    const name = sanitizeString(r?.name, NAME_MAX);
+    if (!name) {
+      return { ok: false, error: `Rutina #${i + 1}: nombre inválido o demasiado largo.` };
     }
-    if (
-      r.dayOfWeek !== null &&
-      (typeof r.dayOfWeek !== "number" || r.dayOfWeek < 0 || r.dayOfWeek > 6)
-    ) {
-      return { ok: false, error: `Rutina "${r.name}": dayOfWeek inválido.` };
+    const day =
+      r.dayOfWeek === null || r.dayOfWeek === undefined
+        ? null
+        : sanitizeNumber(r.dayOfWeek, 0, 6);
+    if (day === undefined) {
+      return { ok: false, error: `Rutina "${name}": dayOfWeek inválido.` };
     }
     if (!Array.isArray(r.exercises)) {
-      return { ok: false, error: `Rutina "${r.name}": exercises debe ser array.` };
+      return { ok: false, error: `Rutina "${name}": exercises debe ser array.` };
     }
+    if (r.exercises.length > 100) {
+      return { ok: false, error: `Rutina "${name}": demasiados ejercicios (máx 100).` };
+    }
+
+    const exOut: IncomingExercise[] = [];
+    for (let j = 0; j < r.exercises.length; j++) {
+      const ex = r.exercises[j] as Record<string, unknown>;
+      const exName = sanitizeString(ex?.name, NAME_MAX);
+      const exMuscle = sanitizeString(ex?.muscleGroup, 30);
+      const exUnit = typeof ex?.unit === "string" && VALID_UNITS.has(ex.unit) ? ex.unit : null;
+      const exSets = sanitizeNumber(ex?.sets, 1, 99);
+      const exRest = sanitizeNumber(ex?.restSeconds, 0, 1800);
+      const exWeight = sanitizeNumber(ex?.targetWeight, 0, 10000);
+      if (!exName || !exMuscle || !exUnit || exSets === null || exRest === null || exWeight === null) {
+        return {
+          ok: false,
+          error: `Rutina "${name}" ejercicio #${j + 1}: campos inválidos.`,
+        };
+      }
+      // Reps are either a number or a short string like "8-12" or "AMRAP"
+      let reps: number | string;
+      if (typeof ex.reps === "number") {
+        const n = sanitizeNumber(ex.reps, 0, 200);
+        if (n === null) {
+          return { ok: false, error: `Rutina "${name}" ejercicio #${j + 1}: reps inválidas.` };
+        }
+        reps = n;
+      } else {
+        const s = sanitizeString(ex.reps, 20);
+        if (!s) {
+          return { ok: false, error: `Rutina "${name}" ejercicio #${j + 1}: reps inválidas.` };
+        }
+        reps = s;
+      }
+      const id = sanitizeString(ex?.id, 50) ?? `ex_${Date.now()}_${j}`;
+      const supersetId = ex?.supersetId === undefined
+        ? undefined
+        : (sanitizeString(ex.supersetId, 50) ?? undefined);
+      const equipmentId = ex?.equipmentId === undefined
+        ? undefined
+        : (sanitizeString(ex.equipmentId, 50) ?? undefined);
+      exOut.push({
+        id,
+        name: exName,
+        muscleGroup: exMuscle,
+        sets: exSets,
+        reps,
+        targetWeight: exWeight,
+        unit: exUnit,
+        restSeconds: exRest,
+        supersetId,
+        equipmentId,
+      });
+    }
+
+    out.push({ name, dayOfWeek: day ?? null, exercises: exOut });
   }
-  return { ok: true, value: payload as IncomingRoutine[] };
+  return { ok: true, value: out };
 }
 
 export async function POST(req: NextRequest) {

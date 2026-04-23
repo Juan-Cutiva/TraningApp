@@ -365,7 +365,7 @@ export function BodyWeightContent() {
                     borderRadius: "12px",
                     fontSize: "12px",
                   }}
-                  formatter={(value: number, name: string) => [
+                  formatter={(value, name) => [
                     `${value} kg`,
                     name === "avg7" ? "Media 7 días" : "Peso",
                   ]}

@@ -83,7 +83,14 @@ export async function PATCH(
   const query = `UPDATE users SET ${updates.join(", ")} WHERE id = $${i} RETURNING id, email, active, role, created_at`;
 
   try {
-    const rows = await sql(query, values);
+    // Neon supports both tagged-template and function-style calls but the
+    // types only model the tagged variant. Cast to the function signature
+    // we're actually using; the runtime behavior is documented.
+    const sqlFn = sql as unknown as (
+      query: string,
+      params: unknown[],
+    ) => Promise<Record<string, unknown>[]>;
+    const rows = await sqlFn(query, values);
     if (rows.length === 0) {
       return NextResponse.json({ error: "Usuario no encontrado." }, { status: 404 });
     }
