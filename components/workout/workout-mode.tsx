@@ -182,25 +182,6 @@ export function WorkoutMode({ routineId }: { routineId: number }) {
     >
   >(new Map());
 
-  /**
-   * Rounds a weight to the nearest 0.25 kg (or 0.5 lbs). This matches the
-   * granularity of typical increments and avoids awkward numbers like 52.63.
-   */
-  function roundSuggestedWeight(w: number): number {
-    return Math.round(w * 4) / 4;
-  }
-
-  /**
-   * Suggested weight = last recorded weight + last session's weightDelta (if any).
-   * Capped at zero so negative deltas can't produce a negative prefill when last weight is low.
-   */
-  function suggestedWeightFor(exerciseName: string, fallbackWeight: number): number {
-    const last = lastWeightsRef.current.get(exerciseName) ?? 0;
-    if (last <= 0) return fallbackWeight;
-    const delta = lastRecsRef.current.get(exerciseName)?.weightDelta ?? 0;
-    return Math.max(0, roundSuggestedWeight(last + delta));
-  }
-
   // Inicializar logs desde la rutina. Reps arrancan vacías para que el target
   // de la rutina aparezca como placeholder (el usuario escribe las reps reales).
   // RPE default "normal" (≈ RPE 7.5 / 2 RIR) — el motor exige ≥50% de cobertura
@@ -237,13 +218,16 @@ export function WorkoutMode({ routineId }: { routineId: number }) {
       recs.forEach((rec, i) => {
         if (rec) lastRecsRef.current.set(r.exercises[i].name, rec);
       });
-      // Apply weight suggestion (last + recommendation delta) to each exercise's sets.
-      // This is the pre-fill the user sees in set rows on session start.
+      // Pre-fill each set's weight with the LAST recorded weight — the
+      // recommendation is just advisory text, it must NOT silently mutate
+      // the suggested weight. If the user wants to follow the tip, they
+      // change the weight themselves.
       r.exercises.forEach((ex, i) => {
-        const suggested = suggestedWeightFor(ex.name, ex.targetWeight);
-        if (suggested > 0) {
+        const lastW = lastWeightsRef.current.get(ex.name) ?? 0;
+        const prefill = lastW > 0 ? lastW : ex.targetWeight;
+        if (prefill > 0) {
           initLogs[i].sets.forEach((s) => {
-            s.weight = suggested;
+            s.weight = prefill;
           });
         }
       });
@@ -1216,7 +1200,6 @@ ${exerciseLines}
                 if (!exName) return null;
                 const last = lastWeightsRef.current.get(exName) ?? 0;
                 const unit = currentGroup[0]?.log.sets[0]?.unit ?? "kg";
-                const suggested = last > 0 ? suggestedWeightFor(exName, last) : 0;
                 const rec = lastRecsRef.current.get(exName);
                 const tipOpen = tipOpenFor === exName;
                 const canToggle = !!rec;
@@ -1231,14 +1214,6 @@ ${exerciseLines}
                       {showWeightLine && (
                         <span>
                           Última: {last} {unit}
-                          {suggested !== last && (
-                            <>
-                              {" · Sugerido: "}
-                              <span className="font-semibold text-foreground/80">
-                                {suggested} {unit}
-                              </span>
-                            </>
-                          )}
                         </span>
                       )}
                       {canToggle && (
