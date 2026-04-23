@@ -17,6 +17,14 @@ const nextConfig = {
   images: {
     unoptimized: true,
   },
+  // Next 16 uses Turbopack in `next dev`. @serwist/next injects a webpack
+  // config (for production `next build`, which still uses webpack). This
+  // empty turbopack object tells Next "yes, I know about Turbopack" so the
+  // dev server doesn't error out over the unused webpack config.
+  // In dev, serwist is disabled (see withSerwistInit below) so no SW work
+  // happens anyway; in production, next build uses webpack where the
+  // serwist config is consumed normally.
+  turbopack: {},
 };
 
 export default withSerwist(nextConfig);
