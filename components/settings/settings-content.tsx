@@ -42,9 +42,10 @@ import {
   LogOut,
 } from "lucide-react";
 
-import { BASE_ROUTINES } from "@/lib/base-routines";
+import { fetchBaseRoutines } from "@/lib/base-routines-fetch";
 import { useAuth } from "@/components/auth/auth-provider";
 import { AdminUsersPanel } from "./admin-users-panel";
+import Link from "next/link";
 
 const DEFAULT_SETTINGS = {
   defaultRestSeconds: 150,
@@ -191,22 +192,32 @@ export function SettingsContent() {
   async function handleLoadBaseRoutines() {
     if (
       !confirm(
-        "Esto agregará las 4 rutinas base (Lun, Mar, Jue, Vie). ¿Continuar?",
+        "Esto agregará las rutinas base configuradas por el admin (o las del código si no hay internet). ¿Continuar?",
       )
     ) {
       return;
     }
 
     try {
-      const routinesToAdd = BASE_ROUTINES.map((r) => ({
+      // Pull the latest template from the server; fetchBaseRoutines falls
+      // back to the bundled array if the endpoint is unreachable.
+      const response = await fetchBaseRoutines();
+      const now = new Date();
+      const routinesToAdd = response.routines.map((r) => ({
         ...r,
-        createdAt: new Date(),
-        updatedAt: new Date(),
+        createdAt: now,
+        updatedAt: now,
       }));
 
       await db.routines.bulkAdd(routinesToAdd);
-      setLoadBaseStatus("Rutinas base cargadas correctamente");
-      setTimeout(() => setLoadBaseStatus(null), 3000);
+      const suffix =
+        response.source === "database"
+          ? " (actualizadas por el admin)"
+          : response.source.startsWith("bundled")
+            ? " (versión del código — sin conexión)"
+            : "";
+      setLoadBaseStatus(`Rutinas base cargadas${suffix}`);
+      setTimeout(() => setLoadBaseStatus(null), 3500);
     } catch {
       setLoadBaseStatus("Error al cargar rutinas base");
     }
@@ -629,8 +640,37 @@ export function SettingsContent() {
         </CardContent>
       </Card>
 
-      {/* Admin Panel — only visible to admin */}
-      {isAdmin && <AdminUsersPanel />}
+      {/* Admin section — only visible to admin. Includes the users panel
+          (existing) plus a link to the server-side base-routines editor. */}
+      {isAdmin && (
+        <>
+          <Card className="mb-5 border-primary/30 bg-primary/5">
+            <CardHeader className="p-5 pb-3">
+              <CardTitle className="text-base flex items-center gap-2">
+                <Settings className="h-5 w-5 text-primary" />
+                Administración
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="p-5 pt-0 flex flex-col gap-3">
+              <Link href="/settings/base-routines" className="block">
+                <Button
+                  variant="outline"
+                  className="w-full justify-start gap-3 h-12 rounded-lg border-primary/40"
+                >
+                  <Dumbbell className="h-5 w-5 text-primary" />
+                  <div className="flex flex-col items-start">
+                    <span className="font-medium">Editar rutinas base</span>
+                    <span className="text-xs text-muted-foreground">
+                      Se sincroniza con todos los usuarios
+                    </span>
+                  </div>
+                </Button>
+              </Link>
+            </CardContent>
+          </Card>
+          <AdminUsersPanel />
+        </>
+      )}
 
       {/* Danger Zone */}
       <Card className="mb-5 border-destructive/30 bg-destructive/5">
