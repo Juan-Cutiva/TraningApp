@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { useLiveQuery } from "dexie-react-hooks";
 import {
   db,
@@ -58,27 +58,17 @@ import {
 import Link from "next/link";
 import { format } from "date-fns";
 import { es } from "date-fns/locale";
-import { cn } from "@/lib/utils";
+import {
+  cn,
+  DAY_NAMES as DAYS,
+  DAY_SELECT_OPTIONS,
+  parseNumber,
+  generateId,
+} from "@/lib/utils";
 
-const DAYS = [
-  "Domingo",
-  "Lunes",
-  "Martes",
-  "Miercoles",
-  "Jueves",
-  "Viernes",
-  "Sabado",
-];
-
-const DAY_OPTIONS = [
-  { value: "0", label: "Domingo" },
-  { value: "1", label: "Lunes" },
-  { value: "2", label: "Martes" },
-  { value: "3", label: "Miercoles" },
-  { value: "4", label: "Jueves" },
-  { value: "5", label: "Viernes" },
-  { value: "6", label: "Sabado" },
-];
+// "Sin asignar" no aplica en el editor clasico — se maneja aparte como
+// dayOfWeek=null. Se filtra del listado compartido.
+const DAY_OPTIONS = DAY_SELECT_OPTIONS.filter((o) => o.value !== "none");
 
 const MUSCLE_GROUPS = [
   "Pecho",
@@ -94,18 +84,6 @@ const MUSCLE_GROUPS = [
   "Pantorrillas",
   "Full Body",
 ];
-
-function generateId() {
-  return Math.random().toString(36).substring(2, 9);
-}
-
-// Helper to parse number or return default
-function parseNumber(value: string | number, defaultValue: number): number {
-  if (typeof value === "number") return value;
-  if (value === "") return defaultValue;
-  const parsed = parseFloat(value);
-  return isNaN(parsed) ? defaultValue : parsed;
-}
 
 export function RoutinesContent() {
   const routines = useLiveQuery(() => db.routines.toArray());
@@ -160,24 +138,61 @@ export function RoutinesContent() {
   // Equipment picker Sheet
   const [equipmentPickerOpen, setEquipmentPickerOpen] = useState(false);
 
+  // Snapshot of routine state on sheet open, used to detect unsaved changes
+  // when the user tries to close. Stored as JSON string for cheap comparison.
+  const sheetInitialSnapshotRef = useRef<string>("");
+
+  function snapshotCurrent(): string {
+    return JSON.stringify({
+      name: routineName,
+      day: routineDay,
+      ex: exercises,
+    });
+  }
+
   function openNewRoutine() {
     setEditingRoutine(null);
     setRoutineName("");
     setRoutineDay("none");
     setExercises([]);
+    sheetInitialSnapshotRef.current = JSON.stringify({
+      name: "",
+      day: "none",
+      ex: [],
+    });
     setSheetOpen(true);
   }
 
   function openEditRoutine(routine: Routine) {
-    setEditingRoutine(routine);
-    setRoutineName(routine.name);
-    setRoutineDay(
+    const day =
       routine.dayOfWeek !== null && routine.dayOfWeek !== undefined
         ? String(routine.dayOfWeek)
-        : "none",
-    );
-    setExercises([...routine.exercises]);
+        : "none";
+    const ex = [...routine.exercises];
+    setEditingRoutine(routine);
+    setRoutineName(routine.name);
+    setRoutineDay(day);
+    setExercises(ex);
+    sheetInitialSnapshotRef.current = JSON.stringify({
+      name: routine.name,
+      day,
+      ex,
+    });
     setSheetOpen(true);
+  }
+
+  /** Wrap Sheet onOpenChange so closing with unsaved changes prompts a confirm. */
+  function handleSheetOpenChange(open: boolean) {
+    if (!open) {
+      const dirty = snapshotCurrent() !== sheetInitialSnapshotRef.current;
+      if (dirty) {
+        const ok = confirm(
+          "Tienes cambios sin guardar en esta rutina. ¿Cerrar igualmente?",
+        );
+        if (!ok) return;
+      }
+    }
+    setSheetOpen(open);
   }
 
   function openNewExercise() {
@@ -522,7 +537,7 @@ export function RoutinesContent() {
       </Dialog>
 
       {/* Routine Sheet (Bottom) */}
-      <Sheet open={sheetOpen} onOpenChange={setSheetOpen}>
+      <Sheet open={sheetOpen} onOpenChange={handleSheetOpenChange}>
         <SheetContent
           side="bottom"
           className="max-h-[90dvh] overflow-auto rounded-t-2xl"

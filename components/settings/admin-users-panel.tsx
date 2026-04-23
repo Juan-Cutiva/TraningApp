@@ -14,6 +14,7 @@ import {
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { adminHeaders } from "@/lib/auth";
 import { cn } from "@/lib/utils";
+import { toast } from "sonner";
 
 interface RemoteUser {
   id: number;
@@ -95,13 +96,15 @@ export function AdminUsersPanel() {
     try {
       const res = await fetch(`/api/admin/users/${user.id}`, { method: "DELETE", headers: adminHeaders() });
       if (!res.ok) {
-        const d = await res.json();
-        alert(d.error ?? "No se pudo eliminar el usuario.");
+        const d = await res.json().catch(() => ({}));
+        toast.error("No se pudo eliminar", {
+          description: d.error ?? "Intenta de nuevo.",
+        });
         return;
       }
       await fetchUsers();
     } catch {
-      alert("Error de conexión al eliminar.");
+      toast.error("Error de conexión al eliminar.");
     }
   }
 

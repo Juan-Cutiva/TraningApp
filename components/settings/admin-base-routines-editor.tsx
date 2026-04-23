@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/components/auth/auth-provider";
@@ -52,33 +52,18 @@ import {
   CheckCircle2,
 } from "lucide-react";
 import { toast } from "sonner";
-import { cn } from "@/lib/utils";
+import {
+  cn,
+  DAY_NAMES as DAYS,
+  DAY_SELECT_OPTIONS as DAY_OPTIONS,
+  parseNumber,
+  generateId,
+} from "@/lib/utils";
 import type { RoutineExercise } from "@/lib/db";
 import type { Equipment } from "@/lib/db";
 import { findCatalogEquipment, EQUIPMENT_TYPE_LABELS } from "@/lib/equipment-catalog";
 import { resolveEquipment } from "@/lib/db";
 import { EquipmentPickerSheet } from "@/components/routines/equipment-picker-sheet";
-
-const DAYS = [
-  "Domingo",
-  "Lunes",
-  "Martes",
-  "Miércoles",
-  "Jueves",
-  "Viernes",
-  "Sábado",
-];
-
-const DAY_OPTIONS = [
-  { value: "none", label: "Sin asignar" },
-  { value: "0", label: "Domingo" },
-  { value: "1", label: "Lunes" },
-  { value: "2", label: "Martes" },
-  { value: "3", label: "Miércoles" },
-  { value: "4", label: "Jueves" },
-  { value: "5", label: "Viernes" },
-  { value: "6", label: "Sábado" },
-];
 
 const MUSCLE_GROUPS = [
   "Pecho",
@@ -94,16 +79,6 @@ const MUSCLE_GROUPS = [
   "Pantorrillas",
   "Full Body",
 ];
-
-function genId() {
-  return Math.random().toString(36).substring(2, 9);
-}
-
-function parseNum(v: string, def: number): number {
-  if (v === "") return def;
-  const n = parseFloat(v);
-  return isNaN(n) ? def : n;
-}
 
 // ─── Component ────────────────────────────────────────────────────────────────
 
@@ -126,6 +101,22 @@ export function AdminBaseRoutinesEditor() {
   const [rName, setRName] = useState("");
   const [rDay, setRDay] = useState<string>("none");
   const [rExercises, setRExercises] = useState<RoutineExercise[]>([]);
+  const sheetInitialSnapshotRef = useRef<string>("");
+  function snapshotCurrent(): string {
+    return JSON.stringify({ name: rName, day: rDay, ex: rExercises });
+  }
+  function handleSheetOpenChange(open: boolean) {
+    if (!open) {
+      const dirty = snapshotCurrent() !== sheetInitialSnapshotRef.current;
+      if (dirty) {
+        const ok = confirm(
+          "Tienes cambios sin guardar en esta rutina. ¿Cerrar igualmente?",
+        );
+        if (!ok) return;
+      }
+    }
+    setSheetOpen(open);
+  }
 
   // Exercise dialog (inside routine editor)
   const [exDialogOpen, setExDialogOpen] = useState(false);
@@ -164,14 +155,26 @@ export function AdminBaseRoutinesEditor() {
     setRName("");
     setRDay("none");
     setRExercises([]);
+    sheetInitialSnapshotRef.current = JSON.stringify({
+      name: "",
+      day: "none",
+      ex: [],
+    });
     setSheetOpen(true);
   }
   function openEditRoutine(i: number) {
     const r = routines[i];
+    const day = r.dayOfWeek === null ? "none" : String(r.dayOfWeek);
+    const ex = [...r.exercises];
     setEditingIndex(i);
     setRName(r.name);
-    setRDay(r.dayOfWeek === null ? "none" : String(r.dayOfWeek));
-    setRExercises([...r.exercises]);
+    setRDay(day);
+    setRExercises(ex);
+    sheetInitialSnapshotRef.current = JSON.stringify({
+      name: r.name,
+      day,
+      ex,
+    });
     setSheetOpen(true);
   }
   function removeRoutine(i: number) {
@@ -248,14 +251,14 @@ export function AdminBaseRoutinesEditor() {
     }
     const existing = editingExIndex !== null ? rExercises[editingExIndex] : null;
     const next: RoutineExercise = {
-      id: existing?.id || genId(),
+      id: existing?.id || generateId(),
       name: exName.trim(),
       muscleGroup: exMuscle,
-      sets: parseNum(exSets, 3),
+      sets: parseNumber(exSets, 3),
       reps: exReps,
-      targetWeight: parseNum(exWeight, 0),
+      targetWeight: parseNumber(exWeight, 0),
       unit: exUnit,
-      restSeconds: parseNum(exRest, 150),
+      restSeconds: parseNumber(exRest, 150),
       supersetId: existing?.supersetId,
       equipmentId: exEquipmentId,
     };
@@ -285,7 +288,7 @@ export function AdminBaseRoutinesEditor() {
     if (cur && cur === nxt) {
       next[i + 1] = { ...next[i + 1], supersetId: undefined };
     } else {
-      const id = cur || nxt || genId();
+      const id = cur || nxt || generateId();
       next[i] = { ...next[i], supersetId: id };
       next[i + 1] = { ...next[i + 1], supersetId: id };
     }
@@ -497,7 +500,7 @@ export function AdminBaseRoutinesEditor() {
       </div>
 
       {/* Routine edit sheet */}
-      <Sheet open={sheetOpen} onOpenChange={setSheetOpen}>
+      <Sheet open={sheetOpen} onOpenChange={handleSheetOpenChange}>
         <SheetContent side="bottom" className="max-h-[92dvh] overflow-auto rounded-t-2xl">
           <SheetHeader className="px-4 pt-4 pb-2">
             <SheetTitle>

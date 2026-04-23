@@ -4,6 +4,8 @@ import { ThemeProvider } from "@/components/theme-provider";
 import { AppShell } from "@/components/app-shell";
 import { Toaster } from "@/components/ui/sonner";
 import { AuthProvider } from "@/components/auth/auth-provider";
+import { ErrorBoundary } from "@/components/error-boundary";
+import { Analytics } from "@vercel/analytics/react";
 import "./globals.css";
 
 const inter = Inter({ subsets: ["latin"], variable: "--font-inter" });
@@ -83,10 +85,13 @@ export default function RootLayout({
         className={`${inter.variable} ${spaceGrotesk.variable} font-sans antialiased`}
       >
         <ThemeProvider attribute="class" defaultTheme="dark" enableSystem>
-          <AuthProvider>
-            <AppShell>{children}</AppShell>
-          </AuthProvider>
+          <ErrorBoundary resettable>
+            <AuthProvider>
+              <AppShell>{children}</AppShell>
+            </AuthProvider>
+          </ErrorBoundary>
           <Toaster position="top-center" richColors />
+          <Analytics />
         </ThemeProvider>
       </body>
     </html>
