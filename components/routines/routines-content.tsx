@@ -1,71 +1,41 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useState } from "react";
 import { useLiveQuery } from "dexie-react-hooks";
 import {
   db,
   estimateRoutineDuration,
   type Routine,
-  type RoutineExercise,
 } from "@/lib/db";
 import {
-  ExerciseFormDialog,
-  DEFAULT_REST_PRESETS,
-} from "./exercise-form-dialog";
-import {
-  findCatalogEquipment,
-  EQUIPMENT_TYPE_LABELS,
-} from "@/lib/equipment-catalog";
+  RoutineEditorSheet,
+  type RoutineDraft,
+} from "./routine-editor-sheet";
+import { findCatalogEquipment, EQUIPMENT_TYPE_LABELS } from "@/lib/equipment-catalog";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
-import {
-  Sheet,
-  SheetContent,
-  SheetHeader,
-  SheetTitle,
-  SheetFooter,
-} from "@/components/ui/sheet";
 import {
   Dialog,
   DialogContent,
+  DialogFooter,
   DialogHeader,
   DialogTitle,
-  DialogFooter,
 } from "@/components/ui/dialog";
 import {
-  Plus,
-  Edit2,
-  Trash2,
-  Dumbbell,
-  ChevronRight,
-  ChevronUp,
-  ChevronDown,
-  Link2,
-  Copy,
-  History,
-  Clock,
   BarChart3,
+  ChevronRight,
+  Clock,
+  Copy,
+  Dumbbell,
+  Edit2,
+  History,
+  Plus,
+  Trash2,
 } from "lucide-react";
 import Link from "next/link";
 import { format } from "date-fns";
 import { es } from "date-fns/locale";
-import {
-  DAY_NAMES as DAYS,
-  DAY_SELECT_OPTIONS,
-  generateId,
-} from "@/lib/utils";
-
-// "Sin asignar" no aplica en el editor — se maneja aparte como dayOfWeek=null.
-const DAY_OPTIONS = DAY_SELECT_OPTIONS.filter((o) => o.value !== "none");
+import { DAY_NAMES as DAYS, generateId } from "@/lib/utils";
 
 export function RoutinesContent() {
   const routines = useLiveQuery(() => db.routines.toArray());
@@ -93,138 +63,53 @@ export function RoutinesContent() {
     return logs.slice(0, 10);
   }, [historyRoutineId]);
 
-  // Routine sheet state
+  // Routine sheet state — the sheet owns name/day/exercises internally.
+  // We only need to track whether it's open + which routine it's editing
+  // (null = new, `clone:<name>` preseed for duplicates).
   const [sheetOpen, setSheetOpen] = useState(false);
   const [editingRoutine, setEditingRoutine] = useState<Routine | null>(null);
-  const [routineName, setRoutineName] = useState("");
-  const [routineDay, setRoutineDay] = useState("none");
-  const [exercises, setExercises] = useState<RoutineExercise[]>([]);
-
-  // Exercise dialog state
-  const [exerciseDialogOpen, setExerciseDialogOpen] = useState(false);
-  const [editingExerciseIndex, setEditingExerciseIndex] = useState<
-    number | null
-  >(null);
-  // The per-field exercise form state now lives inside <ExerciseFormDialog>;
-  // we only need to know the index being edited (null = new) to know where
-  // to put the result in the exercises array.
-
-  // Snapshot of routine state on sheet open, used to detect unsaved changes
-  // when the user tries to close. Stored as JSON string for cheap comparison.
-  const sheetInitialSnapshotRef = useRef<string>("");
-
-  function snapshotCurrent(): string {
-    return JSON.stringify({
-      name: routineName,
-      day: routineDay,
-      ex: exercises,
-    });
-  }
+  const [sheetInitial, setSheetInitial] = useState<{
+    name: string;
+    dayOfWeek: number | null;
+    exercises: Routine["exercises"];
+  } | null>(null);
 
   function openNewRoutine() {
     setEditingRoutine(null);
-    setRoutineName("");
-    setRoutineDay("none");
-    setExercises([]);
-    sheetInitialSnapshotRef.current = JSON.stringify({
-      name: "",
-      day: "none",
-      ex: [],
-    });
+    setSheetInitial(null);
     setSheetOpen(true);
   }
 
   function openEditRoutine(routine: Routine) {
-    const day =
-      routine.dayOfWeek !== null && routine.dayOfWeek !== undefined
-        ? String(routine.dayOfWeek)
-        : "none";
-    const ex = [...routine.exercises];
     setEditingRoutine(routine);
-    setRoutineName(routine.name);
-    setRoutineDay(day);
-    setExercises(ex);
-    sheetInitialSnapshotRef.current = JSON.stringify({
+    setSheetInitial({
       name: routine.name,
-      day,
-      ex,
+      dayOfWeek: routine.dayOfWeek,
+      exercises: routine.exercises,
     });
     setSheetOpen(true);
   }
 
-  /** Wrap Sheet onOpenChange so closing with unsaved changes prompts a confirm. */
-  function handleSheetOpenChange(open: boolean) {
-    if (!open) {
-      const dirty = snapshotCurrent() !== sheetInitialSnapshotRef.current;
-      if (dirty) {
-        const ok = confirm(
-          "Tienes cambios sin guardar en esta rutina. ¿Cerrar igualmente?",
-        );
-        if (!ok) return;
-      }
-    }
-    setSheetOpen(open);
+  function cloneRoutine(routine: Routine) {
+    setEditingRoutine(null);
+    setSheetInitial({
+      name: `Copia de ${routine.name}`,
+      dayOfWeek: routine.dayOfWeek,
+      exercises: routine.exercises.map((ex) => ({
+        ...ex,
+        id: generateId(),
+      })),
+    });
+    setSheetOpen(true);
   }
 
-  function openNewExercise() {
-    setEditingExerciseIndex(null);
-    setExerciseDialogOpen(true);
-  }
-
-  function openEditExercise(index: number) {
-    setEditingExerciseIndex(index);
-    setExerciseDialogOpen(true);
-  }
-
-  function handleExerciseSave(exercise: RoutineExercise) {
-    if (editingExerciseIndex !== null) {
-      const updated = [...exercises];
-      updated[editingExerciseIndex] = exercise;
-      setExercises(updated);
-    } else {
-      setExercises([...exercises, exercise]);
-    }
-  }
-
-  function removeExercise(index: number) {
-    setExercises(exercises.filter((_, i) => i !== index));
-  }
-
-  function moveExercise(index: number, direction: -1 | 1) {
-    if (index + direction < 0 || index + direction >= exercises.length) return;
-    const newEx = [...exercises];
-    const temp = newEx[index];
-    newEx[index] = newEx[index + direction];
-    newEx[index + direction] = temp;
-    setExercises(newEx);
-  }
-
-  function toggleSuperset(index: number) {
-    if (index >= exercises.length - 1) return;
-    const newEx = [...exercises];
-    const currentId = newEx[index].supersetId;
-    const nextId = newEx[index + 1].supersetId;
-
-    if (currentId && currentId === nextId) {
-      newEx[index + 1].supersetId = undefined;
-    } else {
-      const newId = currentId || nextId || generateId();
-      newEx[index].supersetId = newId;
-      newEx[index + 1].supersetId = newId;
-    }
-    setExercises(newEx);
-  }
-
-  async function saveRoutine() {
-    if (!routineName.trim() || exercises.length === 0) return;
-
+  async function handleRoutineSave(draft: RoutineDraft) {
     const data = {
-      name: routineName.trim(),
-      dayOfWeek: routineDay === "none" ? null : parseInt(routineDay),
-      exercises,
+      name: draft.name,
+      dayOfWeek: draft.dayOfWeek,
+      exercises: draft.exercises,
       updatedAt: new Date(),
     };
-
     if (editingRoutine?.id) {
       await db.routines.update(editingRoutine.id, data);
     } else {
@@ -233,25 +118,12 @@ export function RoutinesContent() {
         createdAt: new Date(),
       } as Routine);
     }
-    setSheetOpen(false);
   }
 
   async function handleDelete(id: number) {
     if (confirm("¿Eliminar esta rutina?")) {
       await db.routines.delete(id);
     }
-  }
-
-  function cloneRoutine(routine: Routine) {
-    setEditingRoutine(null);
-    setRoutineName(`Copia de ${routine.name}`);
-    setRoutineDay(
-      routine.dayOfWeek !== null && routine.dayOfWeek !== undefined
-        ? String(routine.dayOfWeek)
-        : "none",
-    );
-    setExercises(routine.exercises.map((ex) => ({ ...ex, id: generateId() })));
-    setSheetOpen(true);
   }
 
   return (
@@ -438,195 +310,16 @@ export function RoutinesContent() {
         </DialogContent>
       </Dialog>
 
-      {/* Routine Sheet (Bottom) */}
-      <Sheet open={sheetOpen} onOpenChange={handleSheetOpenChange}>
-        <SheetContent
-          side="bottom"
-          className="max-h-[90dvh] overflow-auto rounded-t-2xl"
-        >
-          <SheetHeader className="px-4 pt-4 pb-2">
-            <SheetTitle className="text-xl">
-              {editingRoutine ? "Editar Rutina" : "Nueva Rutina"}
-            </SheetTitle>
-          </SheetHeader>
-
-          <div className="flex flex-col gap-5 px-4 py-2">
-            <div>
-              <Label htmlFor="routine-name" className="text-sm font-medium">
-                Nombre de la rutina
-              </Label>
-              <Input
-                id="routine-name"
-                value={routineName}
-                onChange={(e) => setRoutineName(e.target.value)}
-                placeholder="Ej: Push Day, Piernas..."
-                className="mt-1.5 h-11"
-              />
-            </div>
-
-            <div>
-              <Label className="text-sm font-medium">Día de la semana</Label>
-              <Select value={routineDay} onValueChange={setRoutineDay}>
-                <SelectTrigger className="mt-1.5 h-11">
-                  <SelectValue placeholder="Seleccionar día" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="none">Sin asignar</SelectItem>
-                  {DAY_OPTIONS.map((d) => (
-                    <SelectItem key={d.value} value={d.value}>
-                      {d.label}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-
-            {/* Exercises List */}
-            <div>
-              <div className="flex items-center justify-between mb-3">
-                <Label className="text-base font-semibold">Ejercicios</Label>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="gap-1 rounded-lg"
-                  onClick={openNewExercise}
-                >
-                  <Plus className="h-3.5 w-3.5" />
-                  Agregar
-                </Button>
-              </div>
-
-              {exercises.length === 0 ? (
-                <div className="rounded-xl border-2 border-dashed border-muted-foreground/20 py-10 text-center">
-                  <Dumbbell className="mx-auto mb-3 h-10 w-10 text-muted-foreground/30" />
-                  <p className="text-sm text-muted-foreground">
-                    Agrega ejercicios a tu rutina
-                  </p>
-                </div>
-              ) : (
-                <div className="flex flex-col gap-2">
-                  {exercises.map((ex, i) => {
-                    const isLinkedToNext =
-                      i < exercises.length - 1 &&
-                      ex.supersetId &&
-                      ex.supersetId === exercises[i + 1].supersetId;
-
-                    return (
-                      <div key={ex.id} className="relative">
-                        <div
-                          className={`flex items-center gap-2 rounded-xl border p-3 transition-colors
-                            ${ex.supersetId ? "bg-primary/5 border-primary/30" : "bg-card border-border"}
-                          `}
-                        >
-                          <div className="flex flex-col items-center justify-center shrink-0">
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              className="h-7 w-7 text-muted-foreground/60 p-0"
-                              onClick={() => moveExercise(i, -1)}
-                              disabled={i === 0}
-                            >
-                              <ChevronUp className="h-4 w-4" />
-                            </Button>
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              className="h-7 w-7 text-muted-foreground/60 p-0"
-                              onClick={() => moveExercise(i, 1)}
-                              disabled={i === exercises.length - 1}
-                            >
-                              <ChevronDown className="h-4 w-4" />
-                            </Button>
-                          </div>
-                          <button
-                            className="flex flex-1 flex-col text-left min-w-0 px-2"
-                            onClick={() => openEditExercise(i)}
-                          >
-                            <span className="font-semibold text-foreground flex items-center gap-2">
-                              {ex.name || "Sin nombre"}
-                              {ex.supersetId && (
-                                <span className="text-[10px] font-bold bg-primary/10 text-primary px-1.5 py-0.5 rounded">
-                                  SS
-                                </span>
-                              )}
-                              {ex.equipmentId && (
-                                <span className="text-[10px] font-semibold bg-muted text-muted-foreground px-1.5 py-0.5 rounded">
-                                  {findCatalogEquipment(ex.equipmentId)?.name
-                                    ? (EQUIPMENT_TYPE_LABELS[
-                                        findCatalogEquipment(ex.equipmentId)!
-                                          .type
-                                      ] ?? "Equipo")
-                                    : "Equipo"}
-                                </span>
-                              )}
-                            </span>
-                            <span className="text-sm text-muted-foreground">
-                              {ex.muscleGroup} • {ex.sets}×{ex.reps}
-                              {ex.targetWeight > 0
-                                ? ` @ ${ex.targetWeight}${ex.unit || "kg"}`
-                                : ""}
-                            </span>
-                          </button>
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            className="h-8 w-8 text-destructive shrink-0"
-                            onClick={() => removeExercise(i)}
-                          >
-                            <Trash2 className="h-4 w-4" />
-                          </Button>
-                        </div>
-
-                        {i < exercises.length - 1 && (
-                          <div className="flex justify-center -my-2 relative z-10">
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              className={`h-7 w-7 rounded-full border-2 bg-background shadow-sm transition-colors ${
-                                isLinkedToNext
-                                  ? "text-primary border-primary bg-primary/10 hover:bg-primary/20"
-                                  : "text-muted-foreground/40 border-border hover:text-foreground"
-                              }`}
-                              onClick={() => toggleSuperset(i)}
-                              title="Vincular como Súper Serie"
-                            >
-                              <Link2 className="h-3.5 w-3.5" />
-                            </Button>
-                          </div>
-                        )}
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
-            </div>
-          </div>
-
-          <SheetFooter className="px-4 pb-6 pt-4">
-            <Button
-              onClick={saveRoutine}
-              disabled={!routineName.trim() || exercises.length === 0}
-              className="w-full rounded-xl py-6 text-lg font-semibold"
-              size="lg"
-            >
-              {editingRoutine ? "Guardar Cambios" : "Crear Rutina"}
-            </Button>
-          </SheetFooter>
-        </SheetContent>
-      </Sheet>
-
-      {/* Exercise Dialog — shared component with its own equipment picker. */}
-      <ExerciseFormDialog
-        open={exerciseDialogOpen}
-        onOpenChange={setExerciseDialogOpen}
-        initial={
-          editingExerciseIndex !== null
-            ? exercises[editingExerciseIndex] ?? null
-            : null
-        }
-        onSave={handleExerciseSave}
-        nameSuggestions={exerciseSuggestions}
-        restPresets={DEFAULT_REST_PRESETS}
+      {/* Routine editor — self-contained shared component. Nested
+          ExerciseFormDialog + EquipmentPickerSheet are mounted inside it. */}
+      <RoutineEditorSheet
+        open={sheetOpen}
+        onOpenChange={setSheetOpen}
+        initial={sheetInitial}
+        onSave={handleRoutineSave}
+        exerciseSuggestions={exerciseSuggestions}
+        saveLabel={editingRoutine ? "Guardar Cambios" : "Crear Rutina"}
+        title={editingRoutine ? "Editar Rutina" : "Nueva Rutina"}
       />
     </div>
   );

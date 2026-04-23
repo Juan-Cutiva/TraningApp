@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/components/auth/auth-provider";
@@ -13,22 +13,6 @@ import {
 } from "@/lib/base-routines-fetch";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
-import {
-  Sheet,
-  SheetContent,
-  SheetHeader,
-  SheetTitle,
-  SheetFooter,
-} from "@/components/ui/sheet";
 import {
   ArrowLeft,
   Plus,
@@ -36,23 +20,17 @@ import {
   Trash2,
   Save,
   RefreshCw,
-  ChevronUp,
-  ChevronDown,
-  Link2,
   Loader2,
   Shield,
   CloudOff,
   CheckCircle2,
 } from "lucide-react";
 import { toast } from "sonner";
+import { DAY_NAMES as DAYS } from "@/lib/utils";
 import {
-  cn,
-  DAY_NAMES as DAYS,
-  DAY_SELECT_OPTIONS as DAY_OPTIONS,
-  generateId,
-} from "@/lib/utils";
-import type { RoutineExercise } from "@/lib/db";
-import { ExerciseFormDialog } from "@/components/routines/exercise-form-dialog";
+  RoutineEditorSheet,
+  type RoutineDraft,
+} from "@/components/routines/routine-editor-sheet";
 
 // ─── Component ────────────────────────────────────────────────────────────────
 
@@ -69,33 +47,12 @@ export function AdminBaseRoutinesEditor() {
   const [routines, setRoutines] = useState<BaseRoutineTemplate[]>([]);
   const [dirty, setDirty] = useState(false);
 
-  // Routine editor
+  // Routine editor — state owned by <RoutineEditorSheet>. We only track
+  // which index is being edited (null = new) to know where to apply the
+  // save callback.
   const [editingIndex, setEditingIndex] = useState<number | null>(null);
   const [sheetOpen, setSheetOpen] = useState(false);
-  const [rName, setRName] = useState("");
-  const [rDay, setRDay] = useState<string>("none");
-  const [rExercises, setRExercises] = useState<RoutineExercise[]>([]);
-  const sheetInitialSnapshotRef = useRef<string>("");
-  function snapshotCurrent(): string {
-    return JSON.stringify({ name: rName, day: rDay, ex: rExercises });
-  }
-  function handleSheetOpenChange(open: boolean) {
-    if (!open) {
-      const dirty = snapshotCurrent() !== sheetInitialSnapshotRef.current;
-      if (dirty) {
-        const ok = confirm(
-          "Tienes cambios sin guardar en esta rutina. ¿Cerrar igualmente?",
-        );
-        if (!ok) return;
-      }
-    }
-    setSheetOpen(open);
-  }
-
-  // Exercise dialog (inside routine editor) — form state lives inside the
-  // shared <ExerciseFormDialog>; we only need the index being edited.
-  const [exDialogOpen, setExDialogOpen] = useState(false);
-  const [editingExIndex, setEditingExIndex] = useState<number | null>(null);
+  const [sheetInitial, setSheetInitial] = useState<RoutineDraft | null>(null);
 
   // ── Initial load ───────────────────────────────────────────────────────
   useEffect(() => {
@@ -117,28 +74,16 @@ export function AdminBaseRoutinesEditor() {
   // ── Routine-level ops ───────────────────────────────────────────────────
   function openNewRoutine() {
     setEditingIndex(null);
-    setRName("");
-    setRDay("none");
-    setRExercises([]);
-    sheetInitialSnapshotRef.current = JSON.stringify({
-      name: "",
-      day: "none",
-      ex: [],
-    });
+    setSheetInitial(null);
     setSheetOpen(true);
   }
   function openEditRoutine(i: number) {
     const r = routines[i];
-    const day = r.dayOfWeek === null ? "none" : String(r.dayOfWeek);
-    const ex = [...r.exercises];
     setEditingIndex(i);
-    setRName(r.name);
-    setRDay(day);
-    setRExercises(ex);
-    sheetInitialSnapshotRef.current = JSON.stringify({
+    setSheetInitial({
       name: r.name,
-      day,
-      ex,
+      dayOfWeek: r.dayOfWeek,
+      exercises: r.exercises,
     });
     setSheetOpen(true);
   }
@@ -147,15 +92,11 @@ export function AdminBaseRoutinesEditor() {
     setRoutines(routines.filter((_, idx) => idx !== i));
     setDirty(true);
   }
-  function saveRoutine() {
-    if (!rName.trim()) {
-      toast.error("La rutina necesita un nombre.");
-      return;
-    }
+  function handleRoutineSave(draft: RoutineDraft) {
     const payload: BaseRoutineTemplate = {
-      name: rName.trim(),
-      dayOfWeek: rDay === "none" ? null : parseInt(rDay, 10),
-      exercises: rExercises,
+      name: draft.name,
+      dayOfWeek: draft.dayOfWeek,
+      exercises: draft.exercises,
     };
     if (editingIndex !== null) {
       const next = [...routines];
@@ -164,50 +105,7 @@ export function AdminBaseRoutinesEditor() {
     } else {
       setRoutines([...routines, payload]);
     }
-    setSheetOpen(false);
     setDirty(true);
-  }
-
-  // ── Exercise-level ops ──────────────────────────────────────────────────
-  function openNewEx() {
-    setEditingExIndex(null);
-    setExDialogOpen(true);
-  }
-  function openEditEx(i: number) {
-    setEditingExIndex(i);
-    setExDialogOpen(true);
-  }
-  function handleExerciseSave(exercise: RoutineExercise) {
-    if (editingExIndex !== null) {
-      const arr = [...rExercises];
-      arr[editingExIndex] = exercise;
-      setRExercises(arr);
-    } else {
-      setRExercises([...rExercises, exercise]);
-    }
-  }
-  function removeEx(i: number) {
-    setRExercises(rExercises.filter((_, idx) => idx !== i));
-  }
-  function moveEx(i: number, dir: -1 | 1) {
-    if (i + dir < 0 || i + dir >= rExercises.length) return;
-    const next = [...rExercises];
-    [next[i], next[i + dir]] = [next[i + dir], next[i]];
-    setRExercises(next);
-  }
-  function toggleSuperset(i: number) {
-    if (i >= rExercises.length - 1) return;
-    const next = [...rExercises];
-    const cur = next[i].supersetId;
-    const nxt = next[i + 1].supersetId;
-    if (cur && cur === nxt) {
-      next[i + 1] = { ...next[i + 1], supersetId: undefined };
-    } else {
-      const id = cur || nxt || generateId();
-      next[i] = { ...next[i], supersetId: id };
-      next[i + 1] = { ...next[i + 1], supersetId: id };
-    }
-    setRExercises(next);
   }
 
   // ── Persistence ─────────────────────────────────────────────────────────
@@ -414,159 +312,16 @@ export function AdminBaseRoutinesEditor() {
         )}
       </div>
 
-      {/* Routine edit sheet */}
-      <Sheet open={sheetOpen} onOpenChange={handleSheetOpenChange}>
-        <SheetContent side="bottom" className="max-h-[92dvh] overflow-auto rounded-t-2xl">
-          <SheetHeader className="px-4 pt-4 pb-2">
-            <SheetTitle>
-              {editingIndex !== null ? "Editar rutina base" : "Nueva rutina base"}
-            </SheetTitle>
-          </SheetHeader>
-
-          <div className="flex flex-col gap-4 px-4 py-2">
-            <div>
-              <Label className="text-sm font-medium">Nombre</Label>
-              <Input
-                value={rName}
-                onChange={(e) => setRName(e.target.value)}
-                placeholder="Ej: Lunes - Torso"
-                className="mt-1 h-11"
-              />
-            </div>
-            <div>
-              <Label className="text-sm font-medium">Día de la semana</Label>
-              <Select value={rDay} onValueChange={setRDay}>
-                <SelectTrigger className="mt-1 h-11">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {DAY_OPTIONS.map((d) => (
-                    <SelectItem key={d.value} value={d.value}>
-                      {d.label}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-
-            <div>
-              <div className="flex items-center justify-between mb-2">
-                <Label className="text-base font-semibold">Ejercicios</Label>
-                <Button size="sm" variant="outline" onClick={openNewEx} className="gap-1">
-                  <Plus className="h-3.5 w-3.5" />
-                  Agregar
-                </Button>
-              </div>
-
-              {rExercises.length === 0 ? (
-                <p className="text-sm text-muted-foreground text-center py-6">
-                  Sin ejercicios aún.
-                </p>
-              ) : (
-                <div className="flex flex-col gap-1.5">
-                  {rExercises.map((ex, i) => {
-                    const isLinked =
-                      i < rExercises.length - 1 &&
-                      ex.supersetId &&
-                      ex.supersetId === rExercises[i + 1].supersetId;
-                    return (
-                      <div key={ex.id} className="relative">
-                        <div
-                          className={cn(
-                            "flex items-center gap-2 rounded-xl border p-2.5",
-                            ex.supersetId
-                              ? "bg-primary/5 border-primary/30"
-                              : "bg-card border-border",
-                          )}
-                        >
-                          <div className="flex flex-col shrink-0">
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              className="h-6 w-6"
-                              onClick={() => moveEx(i, -1)}
-                              disabled={i === 0}
-                            >
-                              <ChevronUp className="h-3.5 w-3.5" />
-                            </Button>
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              className="h-6 w-6"
-                              onClick={() => moveEx(i, 1)}
-                              disabled={i === rExercises.length - 1}
-                            >
-                              <ChevronDown className="h-3.5 w-3.5" />
-                            </Button>
-                          </div>
-                          <button
-                            className="flex-1 text-left min-w-0"
-                            onClick={() => openEditEx(i)}
-                          >
-                            <p className="text-sm font-semibold truncate flex items-center gap-2">
-                              {ex.name}
-                              {ex.supersetId && (
-                                <span className="text-[9px] font-bold bg-primary/10 text-primary px-1.5 py-0.5 rounded">
-                                  SS
-                                </span>
-                              )}
-                            </p>
-                            <p className="text-xs text-muted-foreground">
-                              {ex.muscleGroup} · {ex.sets}×{ex.reps}
-                              {ex.equipmentId && " · eq"}
-                            </p>
-                          </button>
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            className="h-8 w-8 text-destructive shrink-0"
-                            onClick={() => removeEx(i)}
-                          >
-                            <Trash2 className="h-4 w-4" />
-                          </Button>
-                        </div>
-                        {i < rExercises.length - 1 && (
-                          <div className="flex justify-center -my-1 relative z-10">
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              onClick={() => toggleSuperset(i)}
-                              className={cn(
-                                "h-6 w-6 rounded-full border-2 bg-background",
-                                isLinked
-                                  ? "text-primary border-primary bg-primary/10"
-                                  : "text-muted-foreground/40 border-border",
-                              )}
-                              title="Vincular como super serie"
-                            >
-                              <Link2 className="h-3 w-3" />
-                            </Button>
-                          </div>
-                        )}
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
-            </div>
-          </div>
-
-          <SheetFooter className="px-4 pb-6 pt-4">
-            <Button onClick={saveRoutine} className="w-full rounded-xl py-5 font-semibold">
-              {editingIndex !== null ? "Aplicar cambios" : "Agregar rutina"}
-            </Button>
-          </SheetFooter>
-        </SheetContent>
-      </Sheet>
-
-      {/* Exercise dialog — shared component (free-form rest input for admin). */}
-      <ExerciseFormDialog
-        open={exDialogOpen}
-        onOpenChange={setExDialogOpen}
-        initial={
-          editingExIndex !== null ? rExercises[editingExIndex] ?? null : null
-        }
-        onSave={handleExerciseSave}
+      {/* Routine editor — shared sheet. Admin uses free-form rest input
+          (useRestPresets=false) since any value can be relevant here. */}
+      <RoutineEditorSheet
+        open={sheetOpen}
+        onOpenChange={setSheetOpen}
+        initial={sheetInitial}
+        onSave={handleRoutineSave}
+        useRestPresets={false}
+        saveLabel={editingIndex !== null ? "Aplicar cambios" : "Agregar rutina"}
+        title={editingIndex !== null ? "Editar rutina base" : "Nueva rutina base"}
       />
     </div>
   );
