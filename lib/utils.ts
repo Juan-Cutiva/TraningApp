@@ -88,3 +88,54 @@ export function logError(...args: unknown[]): void {
     console.error(...args);
   }
 }
+
+/**
+ * Ship a client-side error to the server. In production this posts to
+ * /api/client-error which forwards the payload to Vercel function logs
+ * (visible in the Observability tab). In development it just prints to
+ * the console so the devtools stack stays useful.
+ *
+ * Fails silently on network issues — reporting errors shouldn't themselves
+ * raise user-visible errors.
+ */
+export function reportError(
+  error: Error | string,
+  context?: {
+    componentStack?: string;
+    source?: string;
+    extra?: Record<string, unknown>;
+  },
+): void {
+  const message = error instanceof Error ? error.message : String(error);
+  const stack = error instanceof Error ? error.stack : undefined;
+
+  if (process.env.NODE_ENV !== "production") {
+    // eslint-disable-next-line no-console
+    console.error("[reportError]", message, { stack, ...context });
+    return;
+  }
+
+  if (typeof window === "undefined") return;
+  try {
+    const payload = {
+      message,
+      stack,
+      componentStack: context?.componentStack,
+      url: window.location.href,
+      userAgent: navigator.userAgent,
+      timestamp: new Date().toISOString(),
+      context: { source: context?.source, ...context?.extra },
+    };
+    // keepalive lets the request complete even during page unload.
+    fetch("/api/client-error", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+      keepalive: true,
+    }).catch(() => {
+      /* swallowed — can't do anything useful if reporting itself fails */
+    });
+  } catch {
+    /* best-effort */
+  }
+}

@@ -1,6 +1,7 @@
 "use client";
 
 import { Component, ReactNode } from "react";
+import { reportError } from "@/lib/utils";
 
 interface Props {
   children: ReactNode;
@@ -28,12 +29,15 @@ export class ErrorBoundary extends Component<Props, State> {
   }
 
   componentDidCatch(error: Error, info: { componentStack: string }) {
-    // In development surface the stack; in prod keep it quiet unless a
-    // caller-provided onError hook exists. Without an observability service
-    // (Sentry/LogRocket) we can't meaningfully ship these anywhere.
+    // In development surface the stack. In prod, ship to /api/client-error
+    // via reportError — it ends up in Vercel function logs.
     if (process.env.NODE_ENV !== "production") {
       console.error("ErrorBoundary caught:", error, info.componentStack);
     }
+    reportError(error, {
+      componentStack: info.componentStack,
+      source: "ErrorBoundary",
+    });
     this.props.onError?.(error, info.componentStack);
   }
 

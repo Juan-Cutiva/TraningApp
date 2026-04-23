@@ -5,6 +5,8 @@ import { AppShell } from "@/components/app-shell";
 import { Toaster } from "@/components/ui/sonner";
 import { AuthProvider } from "@/components/auth/auth-provider";
 import { ErrorBoundary } from "@/components/error-boundary";
+import { ServiceWorkerRegister } from "@/components/service-worker-register";
+import { GlobalErrorListener } from "@/components/global-error-listener";
 import { Analytics } from "@vercel/analytics/react";
 import "./globals.css";
 
@@ -92,6 +94,8 @@ export default function RootLayout({
           </ErrorBoundary>
           <Toaster position="top-center" richColors />
           <Analytics />
+          <ServiceWorkerRegister />
+          <GlobalErrorListener />
         </ThemeProvider>
       </body>
     </html>
