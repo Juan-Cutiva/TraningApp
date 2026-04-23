@@ -180,12 +180,13 @@ export async function getTodayRoutine(): Promise<Routine | undefined> {
 export async function getExerciseHistory(
   exerciseName: string,
 ): Promise<WorkoutExerciseLog[]> {
-  // orderBy + reverse() da DESC correcto; .reverse().sortBy() ignoraba el reverse
-  const logs = await db.workoutLogs
-    .where("completed")
-    .equals(1)
-    .toArray();
-  // Ordenar por fecha descendente (más reciente primero), filtrando fechas inválidas
+  // NOTE: we intentionally don't use `.where("completed").equals(1)` here —
+  // workoutLog.completed is a boolean, not an integer, and IndexedDB key
+  // comparison is strict (true !== 1), so that query returns an empty array.
+  // Filter in JS instead to be robust regardless of how completed is stored.
+  const allLogs = await db.workoutLogs.toArray();
+  const logs = allLogs.filter((l) => Boolean(l.completed));
+  // Orden: más reciente primero, tolerando fechas inválidas
   logs.sort((a, b) => {
     const ta = new Date(a.date).getTime();
     const tb = new Date(b.date).getTime();

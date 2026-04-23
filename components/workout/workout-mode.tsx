@@ -1214,27 +1214,33 @@ ${exerciseLines}
               {(() => {
                 const exName = currentGroup[0]?.log.exerciseName;
                 if (!exName) return null;
-                const last = lastWeightsRef.current.get(exName);
-                if (!last) return null;
+                const last = lastWeightsRef.current.get(exName) ?? 0;
                 const unit = currentGroup[0]?.log.sets[0]?.unit ?? "kg";
-                const suggested = suggestedWeightFor(exName, last);
+                const suggested = last > 0 ? suggestedWeightFor(exName, last) : 0;
                 const rec = lastRecsRef.current.get(exName);
                 const tipOpen = tipOpenFor === exName;
                 const canToggle = !!rec;
+                const showWeightLine = last > 0;
+
+                // Nothing to show if there's neither prior weight nor a recommendation
+                if (!showWeightLine && !canToggle) return null;
+
                 return (
                   <>
                     <p className="text-xs text-muted-foreground/70 mt-0.5 flex items-center gap-2 justify-center">
-                      <span>
-                        Última: {last} {unit}
-                        {suggested !== last && (
-                          <>
-                            {" · Sugerido: "}
-                            <span className="font-semibold text-foreground/80">
-                              {suggested} {unit}
-                            </span>
-                          </>
-                        )}
-                      </span>
+                      {showWeightLine && (
+                        <span>
+                          Última: {last} {unit}
+                          {suggested !== last && (
+                            <>
+                              {" · Sugerido: "}
+                              <span className="font-semibold text-foreground/80">
+                                {suggested} {unit}
+                              </span>
+                            </>
+                          )}
+                        </span>
+                      )}
                       {canToggle && (
                         <button
                           ref={tipButtonRef}

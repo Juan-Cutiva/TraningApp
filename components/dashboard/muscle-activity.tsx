@@ -8,9 +8,11 @@ import { subDays, isAfter } from "date-fns";
 import { Activity } from "lucide-react";
 
 export function MuscleActivity() {
-  const logs = useLiveQuery(() =>
-    db.workoutLogs.where("completed").equals(1).toArray(),
-  );
+  // Filter in JS — boolean vs integer mismatch makes `.where("completed").equals(1)` unreliable.
+  const logs = useLiveQuery(async () => {
+    const all = await db.workoutLogs.toArray();
+    return all.filter((l) => Boolean(l.completed));
+  });
 
   const { muscleData, maxVolume } = useMemo(() => {
     if (!logs) return { muscleData: [], maxVolume: 0 };

@@ -50,9 +50,17 @@ function fmtTime(seconds: number) {
 
 export function DashboardContent() {
   const todayRoutine = useLiveQuery(() => getTodayRoutine());
-  const workoutLogs = useLiveQuery(() =>
-    db.workoutLogs.where("completed").equals(1).reverse().sortBy("date"),
-  );
+  // Filter completed in JS — the indexed query `.where("completed").equals(1)`
+  // is unreliable because completed is stored as boolean, and IndexedDB key
+  // comparison treats `true` and `1` as distinct values.
+  const workoutLogs = useLiveQuery(async () => {
+    const all = await db.workoutLogs.toArray();
+    return all
+      .filter((l) => Boolean(l.completed))
+      .sort(
+        (a, b) => new Date(b.date).getTime() - new Date(a.date).getTime(),
+      );
+  });
   const routines = useLiveQuery(() => db.routines.toArray());
   const personalRecords = useLiveQuery(() => db.personalRecords.toArray());
 
