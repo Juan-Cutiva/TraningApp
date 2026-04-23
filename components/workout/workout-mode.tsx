@@ -7,9 +7,11 @@ import {
   getLastWeight,
   getLastRecommendation,
   checkAndUpdatePRs,
+  resolveEquipment,
   type WorkoutExerciseLog,
   type WorkoutSetLog,
   type WorkoutLog,
+  type Equipment,
 } from "@/lib/db";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -167,7 +169,7 @@ export function WorkoutMode({ routineId }: { routineId: number }) {
   // Pesos de la última sesión por ejercicio (para sugerencia de progresión)
   const lastWeightsRef = useRef<Map<string, number>>(new Map());
   // Recomendaciones del último entreno por ejercicio (incluye weightDelta para
-  // aplicar al peso sugerido de la próxima sesión)
+  // mostrarlo en el tip — no se aplica automáticamente al peso precargado)
   const lastRecsRef = useRef<
     Map<
       string,
@@ -181,6 +183,9 @@ export function WorkoutMode({ routineId }: { routineId: number }) {
       }
     >
   >(new Map());
+  // Equipment (catalog or custom) por ejercicio, usado por el motor RPE para
+  // respetar el incremento real del equipo en las recomendaciones.
+  const equipmentRef = useRef<Map<string, Equipment>>(new Map());
 
   // Inicializar logs desde la rutina. Reps arrancan vacías para que el target
   // de la rutina aparezca como placeholder (el usuario escribe las reps reales).
@@ -209,7 +214,8 @@ export function WorkoutMode({ routineId }: { routineId: number }) {
     Promise.all([
       Promise.all(r.exercises.map((ex) => getLastWeight(ex.name))),
       Promise.all(r.exercises.map((ex) => getLastRecommendation(ex.name))),
-    ]).then(([weights, recs]) => {
+      Promise.all(r.exercises.map((ex) => resolveEquipment(ex.equipmentId))),
+    ]).then(([weights, recs, equipments]) => {
       weights.forEach((w, i) => {
         if (w > 0) {
           lastWeightsRef.current.set(r.exercises[i].name, w);
@@ -217,6 +223,9 @@ export function WorkoutMode({ routineId }: { routineId: number }) {
       });
       recs.forEach((rec, i) => {
         if (rec) lastRecsRef.current.set(r.exercises[i].name, rec);
+      });
+      equipments.forEach((eq, i) => {
+        if (eq) equipmentRef.current.set(r.exercises[i].name, eq);
       });
       // Pre-fill each set's weight with the LAST recorded weight — the
       // recommendation is just advisory text, it must NOT silently mutate
@@ -676,7 +685,15 @@ export function WorkoutMode({ routineId }: { routineId: number }) {
         rpe: s.rpe as RPEValue | undefined,
         completed: true,
       }));
-      const rec = getRPERecommendation(exLog.muscleGroup ?? "", exLog.exerciseName ?? "", setsForEngine);
+      const eq = equipmentRef.current.get(exLog.exerciseName ?? "");
+      const rec = getRPERecommendation(
+        exLog.muscleGroup ?? "",
+        exLog.exerciseName ?? "",
+        setsForEngine,
+        eq
+          ? { increment: eq.increment, microIncrement: eq.microIncrement, type: eq.type }
+          : undefined,
+      );
       if (rec) {
         return {
           ...exLog,
@@ -1540,10 +1557,18 @@ ${exerciseLines}
                   rpe: s.rpe as RPEValue | undefined,
                   completed: Boolean(s.completed),
                 }));
+                const liveEq = equipmentRef.current.get(log.exerciseName ?? "");
                 const rec = getRPERecommendation(
                   log.muscleGroup ?? "",
                   log.exerciseName ?? "",
                   setsForEngine,
+                  liveEq
+                    ? {
+                        increment: liveEq.increment,
+                        microIncrement: liveEq.microIncrement,
+                        type: liveEq.type,
+                      }
+                    : undefined,
                 );
                 if (!rec) return null;
                 return (

@@ -21,6 +21,14 @@ export interface RoutineExercise {
   unit: string;
   restSeconds: number;
   supersetId?: string;
+  /**
+   * Optional reference to an `Equipment` (either a catalog entry or a
+   * user-created custom one). When present, the RPE engine uses the
+   * equipment's `increment` to scale recommendations — a machine with a
+   * 5 kg stack step won't get a "+2 kg" suggestion, the engine will fall
+   * back to rep progression instead. Omitted for back-compat.
+   */
+  equipmentId?: string;
 }
 
 export interface WorkoutLog {
@@ -120,6 +128,62 @@ export interface AppUser {
   createdAt: Date;
 }
 
+/**
+ * Type of weight source for an exercise. Determines available weight
+ * increments, which the RPE engine uses to scale recommendations.
+ *
+ * - barbell: 1.25 / 2.5 / 5 / 10 / 20 kg plates (microplates common)
+ * - dumbbell: typically 2.5 kg steps (1 kg in some gyms, 5 lb in imperial)
+ * - machine_stack: selectorized weight stack, usually 5 kg steps
+ * - machine_stack_fine: modern stack with 2.5 kg steps, or stack + add-on peg
+ * - plate_loaded: machine loaded with standard plates (hack squat, leverage row)
+ * - cable: cable tower, usually 5 kg stack
+ * - smith: smith machine (bar counterweight varies, uses plates)
+ * - bodyweight: no external weight (optional band/belt load)
+ * - custom: user-defined, increment configured per equipment
+ */
+export type EquipmentType =
+  | "barbell"
+  | "dumbbell"
+  | "machine_stack"
+  | "machine_stack_fine"
+  | "plate_loaded"
+  | "cable"
+  | "smith"
+  | "bodyweight"
+  | "custom";
+
+/**
+ * Movement classification — compound recruits multiple joints/muscles,
+ * isolation targets a single muscle at one joint. Affects recommendation
+ * aggressiveness (compounds tolerate bigger load jumps).
+ */
+export type MovementKind = "compound" | "isolation";
+
+export interface Equipment {
+  id: string;
+  name: string;
+  type: EquipmentType;
+  muscleGroups: string[];
+  movement: MovementKind;
+  /** Carriage/bar/stack minimum (kg). Zero for pure bodyweight. */
+  minWeight: number;
+  /** Upper limit in kg, or null for "no practical cap" (free weight, plate-loaded). */
+  maxWeight: number | null;
+  /** Smallest available step in the equipment's unit. */
+  increment: number;
+  /** Optional secondary micro-step (e.g. 2.5 kg add-on peg on a 5 kg stack). */
+  microIncrement?: number;
+  unit: "kg" | "lb";
+  /** Lucide icon name (from catalog) or null for custom. */
+  icon?: string;
+  /** Base64 data-URL. Only used by custom user-uploaded photos. */
+  photo?: string;
+  /** True if user-created and stored in Dexie. False for catalog entries. */
+  isCustom: boolean;
+  createdAt?: Date;
+}
+
 // --- Database ---
 
 class GymDB extends Dexie {
@@ -131,6 +195,8 @@ class GymDB extends Dexie {
   bodyWeight!: EntityTable<BodyWeightEntry, "id">;
   weightGoals!: EntityTable<WeightGoal, "id">;
   users!: EntityTable<AppUser, "id">;
+  /** User-created custom equipment. Catalog equipment lives in `lib/equipment-catalog.ts` (not persisted). */
+  customEquipment!: EntityTable<Equipment, "id">;
 
   constructor() {
     super("GymTrackerDB");
@@ -153,12 +219,39 @@ class GymDB extends Dexie {
       weightGoals: "++id, createdAt",
       users: "++id, &email",
     });
+    // v4 — custom equipment table (id is a string UUID, primary key)
+    this.version(4).stores({
+      routines: "++id, name, dayOfWeek",
+      workoutLogs: "++id, routineId, date, completed",
+      personalRecords: "++id, exerciseName, type, date",
+      goals: "++id, type, completed",
+      userSettings: "++id",
+      bodyWeight: "++id, date",
+      weightGoals: "++id, createdAt",
+      users: "++id, &email",
+      customEquipment: "id, name, type",
+    });
   }
 }
 
 export const db = new GymDB();
 
 // --- Helpers ---
+
+/**
+ * Resolve an equipment id against catalog + user-created customs.
+ * Catalog entries are static (bundled in lib/equipment-catalog.ts); customs
+ * live in the `customEquipment` Dexie table.
+ */
+export async function resolveEquipment(
+  id: string | undefined | null,
+): Promise<Equipment | undefined> {
+  if (!id) return undefined;
+  const { findCatalogEquipment } = await import("./equipment-catalog");
+  const fromCatalog = findCatalogEquipment(id);
+  if (fromCatalog) return fromCatalog;
+  return db.customEquipment.get(id);
+}
 
 export async function getOrCreateSettings(): Promise<UserSettings> {
   const existing = await db.userSettings.toCollection().first();

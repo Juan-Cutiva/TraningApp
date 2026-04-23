@@ -40,6 +40,7 @@ export type RecommendationType =
   | "increase_weight"         // ready to progress — standard increment
   | "increase_weight_small"   // borderline — micro increment
   | "maintain_increase_reps"  // same weight, build toward top of range
+  | "add_set"                 // equipment increment too coarse — progress via volume
   | "maintain"                // perfect stimulus — repeat
   | "decrease_weight_small"   // slightly over-reached
   | "decrease_weight"         // too heavy for current level
@@ -55,6 +56,19 @@ export interface SetAnalysis {
   /** Undefined if user didn't rate this set */
   rpe?: RPEValue;
   completed: boolean;
+}
+
+/**
+ * Equipment constraints passed into the engine. When provided, the engine
+ * uses the equipment's `increment`/`microIncrement` instead of its own
+ * hardcoded tables and refuses to recommend a weight jump when the minimum
+ * step would be > 5% of the current load (evidence-based: Helms 2018,
+ * MASS 2023 — jumps above ~5% reliably drop rep quality).
+ */
+export interface EquipmentConstraint {
+  increment: number;
+  microIncrement?: number;
+  type: string;
 }
 
 export interface RPERecommendation {
@@ -171,13 +185,18 @@ interface FailureProfile {
 
 /**
  * Rep drop-off: percentage of rep loss from first to last set.
- * Based on Refalo et al.:
- * - Training to failure every set: ~54% total drop
- * - Stopping 3 RIR every set: ~27% drop
- * Practical thresholds:
- * - <30%: normal fatigue
- * - 30-50%: moderate fatigue, acceptable near failure
- * - >50%: excessive — weight likely too heavy for this set scheme
+ *
+ * Based on Refalo et al. 2024 (J Sports Sci) and velocity-loss literature
+ * (Pareja-Blanco lineage, Chiang 2025). Refalo observed ~54 % drop when
+ * training to failure vs ~27 % at 3 RIR. 2023–2025 autoregulation reviews
+ * (MASS) treat >30 % as the practical overload threshold on isolation work.
+ *
+ * Thresholds used by the engine:
+ * - <20 % drop: sustainable, load is appropriate
+ * - 20–30 %: borderline, expected if training close to failure
+ * - >30 %: excessive on isolation; on compounds treat as a warning, not
+ *   a forced decrease (compounds tolerate a bit more drop-off)
+ * - >50 %: unambiguous overload across all exercise types
  */
 interface RepDropOff {
   /** Percentage drop from first set reps to last set reps (0-1) */
@@ -413,12 +432,132 @@ function avgRepRatio(sets: SetAnalysis[], targetRange: RepRange): number {
   return ratios.reduce((a, b) => a + b, 0) / ratios.length;
 }
 
+// ─── Equipment-aware increment resolution ────────────────────────────────────
+
+/**
+ * When an Equipment is provided, override the hardcoded increment table with
+ * the equipment's real min step. Falls back to the category/zone/tier table.
+ *
+ * - `micro` = smallest available step (microIncrement || increment)
+ * - `small` = standard step
+ * - `standard` = 1× standard step
+ * - `large` = 2× standard step (for "way too easy" jumps)
+ */
+function resolveIncrements(
+  equipment: EquipmentConstraint | undefined,
+  category: ExerciseCategory,
+  unit: string,
+  zone: RepRange["zone"],
+  muscleTier: MuscleSizeTier,
+): Increments {
+  if (!equipment) return getIncrements(category, unit, zone, muscleTier);
+  const micro = equipment.microIncrement ?? equipment.increment;
+  const standard = equipment.increment;
+  return {
+    micro,
+    small: Math.min(standard, micro * 2),
+    standard,
+    large: standard * 2,
+  };
+}
+
+/**
+ * Evidence-based 5% rule (Helms 2018, MASS 2023): weight jumps beyond ~5%
+ * of the current working load reliably drop rep quality. When the cheapest
+ * available step exceeds that threshold, the recommendation should switch
+ * from a load jump to a rep/set progression instead of forcing an unrealistic
+ * load change.
+ */
+const MAX_RELATIVE_JUMP = 0.05; // 5 %
+
+function relativeJumpFraction(deltaAbs: number, currentWeight: number): number {
+  if (currentWeight <= 0) return 0; // bodyweight — relative % undefined
+  return deltaAbs / currentWeight;
+}
+
+/**
+ * Post-process a "weight-up" recommendation against the equipment's real
+ * increments. If the proposed jump is > 5 % of current load:
+ *   - Try the micro step first.
+ *   - If even the micro is > 5 %, convert to rep progression (or add_set
+ *     when the user is already at the top of the rep range).
+ */
+function applyEquipmentGuard(
+  rec: RPERecommendation,
+  equipment: EquipmentConstraint | undefined,
+  context: {
+    currentWeight: number;
+    unit: string;
+    atCeilingOfRange: boolean;
+    repRange: RepRange;
+    muscleGroup: string;
+  },
+): RPERecommendation {
+  if (!equipment) return rec;
+  if (rec.weightDelta <= 0) return rec; // only gate weight-UP suggestions
+  if (context.currentWeight <= 0) return rec; // bodyweight
+
+  const deltaAbs = Math.abs(rec.weightDelta);
+  const relative = relativeJumpFraction(deltaAbs, context.currentWeight);
+  if (relative <= MAX_RELATIVE_JUMP) return rec;
+
+  const micro = equipment.microIncrement ?? equipment.increment;
+  const microRel = relativeJumpFraction(micro, context.currentWeight);
+
+  // Case 1 — the micro step still fits under 5 %: downshift to micro.
+  if (micro > 0 && micro < deltaAbs && microRel <= MAX_RELATIVE_JUMP) {
+    return {
+      type: "increase_weight_small",
+      weightDelta: micro,
+      repsDelta: 0,
+      headline: `+${micro} ${context.unit} — micro-incremento del equipo`,
+      detail: `El salto sugerido era > 5 % de tu peso actual (${Math.round(
+        relative * 100,
+      )} %). Este equipo permite ${micro} ${context.unit} como paso mínimo, que es el salto más fino disponible sin sacrificar calidad de reps.`,
+      color: "green",
+      emoji: "💪",
+    };
+  }
+
+  // Case 2 — even the micro is too coarse. If user is already at the top of
+  // the rep range, add a set (volume progression). Otherwise chase more reps
+  // at the current weight (double-progression phase 1).
+  if (context.atCeilingOfRange) {
+    return {
+      type: "add_set",
+      weightDelta: 0,
+      repsDelta: 0,
+      headline: "Agrega 1 serie — el equipo no permite subir fino",
+      detail: `Ya llegaste al techo del rango (${context.repRange.max} reps) pero el incremento mínimo del equipo (${micro} ${context.unit}) es > 5 % de tu peso actual. La progresión evidencia-based aquí es sumar 1 serie efectiva en lugar de forzar un salto grande.`,
+      color: "blue",
+      emoji: "➕",
+    };
+  }
+
+  return {
+    type: "maintain_increase_reps",
+    weightDelta: 0,
+    repsDelta: 1,
+    headline: `Suma 1 rep — el salto del equipo es > 5 %`,
+    detail: `Subir ${deltaAbs} ${context.unit} sería un ${Math.round(
+      relative * 100,
+    )} % de tu peso actual. Con incremento mínimo de ${micro} ${
+      context.unit
+    } en este equipo, la progresión ideal es reps antes que peso: busca +1 rep por serie hasta llegar a ${
+      context.repRange.max
+    }.`,
+    color: "blue",
+    emoji: "📈",
+  };
+}
+
 // ─── Main recommendation function ────────────────────────────────────────────
 
 export function getRPERecommendation(
   muscleGroup: string,
   exerciseName: string,
   sets: SetAnalysis[],
+  equipment?: EquipmentConstraint,
 ): RPERecommendation | null {
   // Only consider fully completed sets
   const completedSets = sets.filter((s) => s.completed);
@@ -440,7 +579,8 @@ export function getRPERecommendation(
   // Rep range: prefer targetReps field (from routine), fall back to actual reps
   const targetRepsSource = completedSets.find(s => s.targetReps)?.targetReps ?? completedSets[0]?.reps ?? "10";
   const repRange   = parseRepRange(targetRepsSource);
-  const increments = getIncrements(category, unit, repRange.zone, muscleTier);
+  const increments = resolveIncrements(equipment, category, unit, repRange.zone, muscleTier);
+  const currentWeight = completedSets[0]?.weight ?? 0;
 
   // Bodyweight detection: all sets have weight === 0
   const isBodyweight = completedSets.every((s) => s.weight === 0);
@@ -478,6 +618,17 @@ export function getRPERecommendation(
   const fixedReps        = repRange.min === repRange.max;
   // Significantly missing rep targets (>50% sets below minimum target)
   const severeRepDeficit = belowFraction > 0.5 && repRange.min > 1;
+
+  // Equipment-aware guard: gate weight-up recs through the real-world
+  // increment of the equipment (falls back to identity if no equipment).
+  const guard = (rec: RPERecommendation) =>
+    applyEquipmentGuard(rec, equipment, {
+      currentWeight,
+      unit,
+      atCeilingOfRange,
+      repRange,
+      muscleGroup,
+    });
 
   // ─────────────────────────────────────────────────────────────────────────
   // EARLY EXIT: SEVERE REP DEFICIT
@@ -613,7 +764,6 @@ export function getRPERecommendation(
   // Small muscles need deload with less failure volume (more fragile joints/tendons)
   const deloadThreshold = muscleTier === "small" ? 0.4 : highVolume ? 0.5 : 0.6;
   if (failureCount >= Math.ceil(ratedSets.length * deloadThreshold) && dominantRpe >= 9.5) {
-    const currentWeight = completedSets[0].weight || 0;
     const deloadAmount  = Math.max(
       increments.standard,
       Math.round(currentWeight * 0.15 / (increments.small || 1.25)) * (increments.small || 1.25),
@@ -634,24 +784,24 @@ export function getRPERecommendation(
   if (repRange.zone === "strength") {
     if (dominantRpe < 7.0) {
       const jump = easyCount === ratedSets.length ? increments.standard : increments.small;
-      return {
+      return guard({
         type: easyCount === ratedSets.length ? "increase_weight" : "increase_weight_small",
         weightDelta: jump, repsDelta: 0,
         headline: `+${jump} ${unit} — fuerza lista para crecer`,
         detail: `RPE bajo (${wAvgRpe.toFixed(1)}) en zona de fuerza. Tu SNC maneja bien este peso. Sube ${jump} ${unit} la próxima sesión.`,
         color: "green", emoji: "🚀",
-      };
+      });
     }
     if (dominantRpe >= 7.0 && dominantRpe <= 8.5 && !finishedAtFailure) {
       const potentialIncrease = !rapidEscalation ? increments.micro : 0;
       if (potentialIncrease > 0) {
-        return {
+        return guard({
           type: "increase_weight_small",
           weightDelta: potentialIncrease, repsDelta: 0,
           headline: `+${potentialIncrease} ${unit} — progresión mínima`,
           detail: `Excelente intensidad para fuerza (RPE ${wAvgRpe.toFixed(1)}). Sube ${potentialIncrease} ${unit} — pequeñas cargas son clave en rangos de fuerza.`,
           color: "green", emoji: "💪",
-        };
+        });
       }
       return {
         type: "maintain",
@@ -700,41 +850,41 @@ export function getRPERecommendation(
   if (dominantRpe < 6.5) {
     // At top of range + everything easy → bigger jump
     if (atCeilingOfRange && easyCount === ratedSets.length && !rapidEscalation) {
-      return {
+      return guard({
         type: "increase_weight_large",
         weightDelta: increments.large, repsDelta: 0,
         headline: `+${increments.large} ${unit} — superaste el rango y estuvo fácil`,
         detail: `Completaste ≥${repRange.max} reps en la mayoría de series con RPE ${simpleAvg.toFixed(1)} (fácil). Has superado claramente este peso. Sube ${increments.large} ${unit}.`,
         color: "green", emoji: "🚀",
-      };
+      });
     }
     // At top of range but not all sets easy
     if (atCeilingOfRange) {
-      return {
+      return guard({
         type: "increase_weight",
         weightDelta: increments.standard, repsDelta: 0,
         headline: `+${increments.standard} ${unit} — techo del rango alcanzado`,
         detail: `Completaste el máximo de ${repRange.max} reps en la mayoría de series con RPE bajo. Listo para subir ${increments.standard} ${unit}.`,
         color: "green", emoji: "⬆️",
-      };
+      });
     }
     // Everything easy but not at top → add reps before weight
     if (easyCount === ratedSets.length && !rapidEscalation) {
-      return {
+      return guard({
         type: "increase_weight_large",
         weightDelta: increments.large, repsDelta: 0,
         headline: `+${increments.large} ${unit} — carga claramente insuficiente`,
         detail: `Todas las series en RPE ${simpleAvg.toFixed(1)} (fácil). Tu ${muscleGroup} ya superó este peso. Sube ${increments.large} ${unit} para generar estímulo real.`,
         color: "green", emoji: "🚀",
-      };
+      });
     }
-    return {
+    return guard({
       type: "increase_weight",
       weightDelta: increments.standard, repsDelta: 0,
       headline: `+${increments.standard} ${unit} la próxima sesión`,
       detail: `Esfuerzo bajo (RPE ponderado ${wAvgRpe.toFixed(1)}). Para ${category === "compound" ? "movimientos compuestos" : "aislamiento"} en zona ${repRange.zone === "hypertrophy" ? "hipertrófica" : "de resistencia"}, sube ${increments.standard} ${unit}.`,
       color: "green", emoji: "⬆️",
-    };
+    });
   }
 
   // ── ZONE: IDEAL (wAvgRpe 6.5–8.5) ─────────────────────────────────────────
@@ -756,32 +906,32 @@ export function getRPERecommendation(
     if (atCeilingOfRange && dominantRpe >= 6.5 && dominantRpe <= 8.5) {
       if (dominantRpe <= 7.5) {
         // At ceiling and feeling easy-moderate → confident weight increase
-        return {
+        return guard({
           type: "increase_weight",
           weightDelta: increments.standard, repsDelta: 0,
           headline: `¡Progresión lista! +${increments.standard} ${unit}`,
           detail: `Completaste ${repRange.max} reps en la mayoría de series con RPE ${wAvgRpe.toFixed(1)}. Has alcanzado el techo del rango (${repRange.min}–${repRange.max}) con margen. Sube ${increments.standard} ${unit} la próxima sesión.`,
           color: "green", emoji: "🎯",
-        };
+        });
       }
       // At ceiling but intensity is high — muscle size determines response
       if (muscleTier === "large") {
-        return {
+        return guard({
           type: "increase_weight_small",
           weightDelta: increments.micro, repsDelta: 0,
           headline: `+${increments.micro} ${unit} — techo alcanzado con intensidad alta`,
           detail: `Completaste el techo de ${repRange.max} reps con RPE ${wAvgRpe.toFixed(1)}. ${muscleGroup} (músculo grande) tolera la progresión. Sube ${increments.micro} ${unit}.`,
           color: "green", emoji: "💪",
-        };
+        });
       }
       if (muscleTier === "medium") {
-        return {
+        return guard({
           type: "increase_weight_small",
           weightDelta: increments.micro, repsDelta: 0,
           headline: `+${increments.micro} ${unit} — progresión prudente`,
           detail: `Techo de ${repRange.max} reps con RPE ${wAvgRpe.toFixed(1)}. Para ${muscleGroup} sube solo ${increments.micro} ${unit} — los músculos medianos progresan más lento.`,
           color: "green", emoji: "💪",
-        };
+        });
       }
       // Small muscles — don't increase at high RPE, consolidate
       return {
@@ -796,22 +946,22 @@ export function getRPERecommendation(
     // ── Fixed rep prescription (e.g., "3x10") — at target with good RPE → increase
     if (fixedReps && allSetsRated) {
       if (dominantRpe >= 6.5 && dominantRpe <= 7.5) {
-        return {
+        return guard({
           type: "increase_weight",
           weightDelta: increments.standard, repsDelta: 0,
           headline: `+${increments.standard} ${unit} — todas las reps completadas con margen`,
           detail: `Completaste ${repRange.min} reps en todas las series con RPE ${wAvgRpe.toFixed(1)}. Con prescripción fija es momento de subir ${increments.standard} ${unit}.`,
           color: "green", emoji: "🎯",
-        };
+        });
       }
       if (dominantRpe > 7.5 && dominantRpe <= 8.5 && !rapidEscalation) {
-        return {
+        return guard({
           type: "increase_weight_small",
           weightDelta: increments.micro, repsDelta: 0,
           headline: `+${increments.micro} ${unit} — progresión mínima`,
           detail: `Completaste la prescripción de ${repRange.min} reps con RPE ${wAvgRpe.toFixed(1)}. Sube ${increments.micro} ${unit} para mantener la sobrecarga progresiva.`,
           color: "green", emoji: "💪",
-        };
+        });
       }
     }
 
@@ -847,25 +997,25 @@ export function getRPERecommendation(
   if (dominantRpe > 8.5 && dominantRpe <= 9.5) {
     // At ceiling even while hard — still warrants small increase for compound
     if (atCeilingOfRange && !finishedAtFailure && category === "compound") {
-      return {
+      return guard({
         type: "increase_weight_small",
         weightDelta: increments.micro, repsDelta: 0,
         headline: `+${increments.micro} ${unit} — techo alcanzado aunque intenso`,
         detail: `Completaste ${repRange.max} reps en la mayoría de series incluso con RPE ${wAvgRpe.toFixed(1)}. Eso demuestra adaptación. Sube ${increments.micro} ${unit} con precaución.`,
         color: "green", emoji: "💪",
-      };
+      });
     }
 
     if (!finishedAtFailure && !rapidEscalation) {
       // v5: Only large/medium muscles can progress at high RPE
       if (muscleTier === "large" || (muscleTier === "medium" && category === "compound")) {
-        return {
+        return guard({
           type: "increase_weight_small",
           weightDelta: increments.micro, repsDelta: 0,
           headline: `Esfuerzo al límite. +${increments.micro} ${unit}`,
           detail: `Series muy duras (RPE ${wAvgRpe.toFixed(1)}) sin fallo y sin escalada rápida. ${muscleTier === "large" ? `${muscleGroup} aguanta la progresión.` : `Progresión mínima para ${muscleGroup}.`} Prueba +${increments.micro} ${unit}.`,
           color: "green", emoji: "💪",
-        };
+        });
       }
       return {
         type: "maintain",
