@@ -65,6 +65,7 @@ import {
   type RPEValue,
   type SetAnalysis,
 } from "@/lib/rpe-engine";
+import { checkSetSanity, type SanityWarning } from "@/lib/sanity-check";
 
 interface SavedWorkoutSession {
   routineId: number;
@@ -144,6 +145,14 @@ export function WorkoutMode({ routineId }: { routineId: number }) {
   // rayo card is currently visible (or null). Auto-opens on entering an
   // exercise with zero completed sets, auto-closes on first set complete.
   const [tipOpenFor, setTipOpenFor] = useState<string | null>(null);
+
+  // Sanity-check dialog state. When completeSet detects suspicious values
+  // (typos like 13 → 130 kg, 12 reps → 120 reps) it stages the work here
+  // and asks the user to confirm before actually marking the set complete.
+  const [sanityDialog, setSanityDialog] = useState<{
+    warnings: SanityWarning[];
+    apply: () => void;
+  } | null>(null);
 
   // Save Weight Dialog
   const [isSaveWeightOpen, setIsSaveWeightOpen] = useState(false);
@@ -546,6 +555,47 @@ export function WorkoutMode({ routineId }: { routineId: number }) {
       if (!ok) return;
     }
 
+    // ── Sanity check — catches typos (13 → 130 kg, 12 → 120 reps) ────────
+    const routineExercise = routine?.exercises.find(
+      (e) => e.id === exLog.exerciseId,
+    );
+    const eq = equipmentRef.current.get(exLog.exerciseName);
+    const warnings = checkSetSanity(currentWeight, currentReps, {
+      targetReps: routineExercise?.reps,
+      lastWeight: lastWeightsRef.current.get(exLog.exerciseName),
+      baseWeight: routineExercise?.targetWeight,
+      maxEquipmentWeight: eq?.maxWeight ?? null,
+      unit: currentSet.unit ?? "kg",
+    });
+
+    if (warnings.length > 0) {
+      // Stage the actual work behind a confirm dialog so the user can
+      // bail out and correct the typo without losing the input.
+      setSanityDialog({
+        warnings,
+        apply: () => {
+          setSanityDialog(null);
+          void applyCompleteSet(exIndex, setIndex, exLog, currentSet, currentWeight, currentReps);
+        },
+      });
+      return;
+    }
+
+    await applyCompleteSet(exIndex, setIndex, exLog, currentSet, currentWeight, currentReps);
+  }
+
+  /**
+   * The side-effecting part of completing a set, separated from `completeSet`
+   * so the sanity-check dialog can defer execution until the user confirms.
+   */
+  async function applyCompleteSet(
+    exIndex: number,
+    setIndex: number,
+    exLog: WorkoutExerciseLog,
+    currentSet: WorkoutSetLog,
+    currentWeight: number,
+    currentReps: number,
+  ) {
     // Marcar el set como completado (normalizar peso y reps a número)
     setExerciseLogs((prev) => {
       const updated = [...prev];
@@ -1872,6 +1922,55 @@ ${exerciseLines}
         onOpenChange={setIsCalculatorOpen}
         defaultUnit={currentGroup[0]?.log.sets[0]?.unit || "kg"}
       />
+
+      {/* Sanity-check dialog — surfaces typo-like outlier values (10× reps
+          or weight) and lets the user either correct the input or confirm
+          that the number really is what they lifted. */}
+      <Dialog
+        open={sanityDialog !== null}
+        onOpenChange={(open) => {
+          if (!open) setSanityDialog(null);
+        }}
+      >
+        <DialogContent className="sm:max-w-sm w-[calc(100%-1.5rem)] rounded-xl z-60">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <span aria-hidden="true">⚠️</span>
+              Revisar valores
+            </DialogTitle>
+          </DialogHeader>
+          <div className="flex flex-col gap-2 py-1">
+            {sanityDialog?.warnings.map((w, i) => (
+              <p
+                key={i}
+                className="text-sm text-foreground rounded-lg border border-yellow-500/30 bg-yellow-500/5 px-3 py-2"
+              >
+                {w.message}
+              </p>
+            ))}
+            <p className="text-xs text-muted-foreground mt-1">
+              Si fue un error, tocá «Corregir» y ajustá el valor. Si realmente
+              lo hiciste así, confirmá abajo.
+            </p>
+          </div>
+          <div className="flex flex-col gap-2 mt-1">
+            <Button
+              variant="outline"
+              onClick={() => setSanityDialog(null)}
+              className="w-full"
+            >
+              Corregir
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={() => sanityDialog?.apply()}
+              className="w-full"
+            >
+              Sí, confirmar el valor
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
