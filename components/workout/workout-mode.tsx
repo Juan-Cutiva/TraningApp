@@ -52,7 +52,6 @@ import { useRouter } from "next/navigation";
 import { cn } from "@/lib/utils";
 import { RestTimer } from "@/components/workout/rest-timer";
 import { PlateCalculator } from "@/components/workout/plate-calculator";
-import { SpotifyPlayer } from "@/components/workout/spotify-player";
 import {
   getRPERecommendation,
   RPE_LABELS,
@@ -66,12 +65,29 @@ interface SavedWorkoutSession {
   routineId: number;
   exerciseLogs: WorkoutExerciseLog[];
   currentExIndex: number;
-  elapsed: number;
-  startedAt: number; // Date.now() cuando empezó
+  /** Absolute ms timestamp when the workout started (Date.now()). */
+  startedAt: number;
+  /** Accumulated ms spent paused — subtracted from total elapsed. */
+  pausedAccumMs: number;
+  /** If currently paused, ms timestamp when pause began; null otherwise. */
+  pausedAt: number | null;
 }
 
 function sessionKey(id: number) {
   return `workout_active_${id}`;
+}
+
+/** Compute elapsed seconds using Date.now() — immune to setInterval drift/throttling. */
+function computeElapsed(
+  startedAt: number | null,
+  pausedAccumMs: number,
+  pausedAt: number | null,
+): number {
+  if (!startedAt) return 0;
+  const now = Date.now();
+  const currentPauseMs = pausedAt !== null ? now - pausedAt : 0;
+  const ms = now - startedAt - pausedAccumMs - currentPauseMs;
+  return Math.max(0, Math.floor(ms / 1000));
 }
 
 export function WorkoutMode({ routineId }: { routineId: number }) {
@@ -79,8 +95,6 @@ export function WorkoutMode({ routineId }: { routineId: number }) {
   const routine = useLiveQuery(() => db.routines.get(routineId));
 
   const [started, setStarted] = useState(false);
-  const [elapsed, setElapsed] = useState(0);
-  const [paused, setPaused] = useState(false);
   const [currentExIndex, setCurrentExIndex] = useState(0);
   const [exerciseLogs, setExerciseLogs] = useState<WorkoutExerciseLog[]>([]);
   const [showRest, setShowRest] = useState(false);
@@ -91,18 +105,20 @@ export function WorkoutMode({ routineId }: { routineId: number }) {
   const [finished, setFinished] = useState(false);
   const [notes, setNotes] = useState("");
   const [savedLogId, setSavedLogId] = useState<number | null>(null);
-  const startTimeRef = useRef<Date | null>(null);
-  const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const [isFinishing, setIsFinishing] = useState(false);
+
+  // Timer state — Date.now()-based. `tick` forces re-render once per second.
+  const [startedAt, setStartedAt] = useState<number | null>(null);
+  const [pausedAccumMs, setPausedAccumMs] = useState(0);
+  const [pausedAt, setPausedAt] = useState<number | null>(null);
+  const [, setTick] = useState(0);
+
+  // Derived elapsed seconds — computed fresh on every render, never drifts
+  const elapsed = computeElapsed(startedAt, pausedAccumMs, pausedAt);
+  const paused = pausedAt !== null;
 
   // Session guardada para reanudar entrenamiento
   const [savedSession, setSavedSession] = useState<SavedWorkoutSession | null>(null);
-
-  // Refs para Page Visibility API (evitan stale closures en el listener)
-  const startedRef = useRef(false);
-  const pausedRef = useRef(false);
-  const finishedRef = useRef(false);
-  const elapsedRef = useRef(0);
-  const hiddenAtRef = useRef<number | null>(null);
 
   // Swap features
   const [isSwapOpen, setIsSwapOpen] = useState(false);
@@ -116,6 +132,9 @@ export function WorkoutMode({ routineId }: { routineId: number }) {
   // Confirm early finish
   const [isConfirmFinishOpen, setIsConfirmFinishOpen] = useState(false);
 
+  // Confirm exit (Salir button)
+  const [isExitConfirmOpen, setIsExitConfirmOpen] = useState(false);
+
   // Save Weight Dialog
   const [isSaveWeightOpen, setIsSaveWeightOpen] = useState(false);
   const [manualWeight, setManualWeight] = useState("");
@@ -126,7 +145,9 @@ export function WorkoutMode({ routineId }: { routineId: number }) {
   // Recomendaciones del último entreno por ejercicio
   const lastRecsRef = useRef<Map<string, { headline: string; detail: string; emoji: string; color: string }>>(new Map());
 
-  // Inicializar logs desde la rutina (solo pesos del historial, sin sesión guardada)
+  // Inicializar logs desde la rutina (solo pesos del historial, sin sesión guardada).
+  // Reps start empty so the routine's target shows as a placeholder — user types
+  // the reps actually performed each set.
   function initFromRoutine(r: NonNullable<typeof routine>) {
     const initLogs: WorkoutExerciseLog[] = r.exercises.map((ex) => ({
       exerciseId: ex.id,
@@ -137,8 +158,7 @@ export function WorkoutMode({ routineId }: { routineId: number }) {
         setNumber: i + 1,
         weight: ex.targetWeight,
         unit: ex.unit || "kg",
-        reps: ex.reps,
-        rpe: "normal" as const,
+        reps: "",
         completed: false,
       })),
     }));
@@ -233,66 +253,43 @@ export function WorkoutMode({ routineId }: { routineId: number }) {
     return groups;
   }, [routine?.exercises]);
 
-  // Timer principal
+  // Re-render tick (1 Hz). No math happens here — elapsed is derived from
+  // Date.now() on every render, so background throttling cannot cause drift.
   useEffect(() => {
-    if (started && !paused && !finished) {
-      intervalRef.current = setInterval(() => {
-        setElapsed((prev) => prev + 1);
-      }, 1000);
-    }
-    return () => {
-      if (intervalRef.current) clearInterval(intervalRef.current);
+    if (!started || finished) return;
+    const id = setInterval(() => setTick((t) => (t + 1) & 0xffff), 1000);
+    return () => clearInterval(id);
+  }, [started, finished]);
+
+  // Re-sync immediately when the tab becomes visible again (throttled intervals
+  // don't fire in background, but the next tick may be up to 1s late).
+  useEffect(() => {
+    const onVis = () => {
+      if (!document.hidden) setTick((t) => (t + 1) & 0xffff);
     };
-  }, [started, paused, finished]);
+    document.addEventListener("visibilitychange", onVis);
+    return () => document.removeEventListener("visibilitychange", onVis);
+  }, []);
 
-  // Mantener refs sincronizados para usarlos sin stale closures
-  useEffect(() => { startedRef.current = started; }, [started]);
-  useEffect(() => { pausedRef.current = paused; }, [paused]);
-  useEffect(() => { finishedRef.current = finished; }, [finished]);
-  useEffect(() => { elapsedRef.current = elapsed; }, [elapsed]);
-
-  // Page Visibility API — corrige el timer cuando el usuario vuelve al navegador
+  // Auto-persist session whenever progress changes. Uses absolute timestamps
+  // so a reload recomputes elapsed correctly regardless of how long the app
+  // was closed.
   useEffect(() => {
-    const handleVisibilityChange = () => {
-      if (document.hidden) {
-        hiddenAtRef.current = Date.now();
-      } else {
-        if (
-          hiddenAtRef.current !== null &&
-          startedRef.current &&
-          !pausedRef.current &&
-          !finishedRef.current
-        ) {
-          const secondsGone = Math.floor((Date.now() - hiddenAtRef.current) / 1000);
-          if (secondsGone > 0) {
-            setElapsed((prev) => prev + secondsGone);
-          }
-        }
-        hiddenAtRef.current = null;
-      }
-    };
-
-    document.addEventListener("visibilitychange", handleVisibilityChange);
-    return () => document.removeEventListener("visibilitychange", handleVisibilityChange);
-  }, []); // mount once — usa refs para evitar stale closures
-
-  // Auto-guardar sesión en localStorage cuando cambia el progreso
-  useEffect(() => {
-    if (!started || finished || !routine?.id || !startTimeRef.current) return;
+    if (!started || finished || !routine?.id || startedAt === null) return;
     const session: SavedWorkoutSession = {
       routineId: routine.id,
       exerciseLogs,
       currentExIndex,
-      elapsed: elapsedRef.current,
-      startedAt: startTimeRef.current.getTime(),
+      startedAt,
+      pausedAccumMs,
+      pausedAt,
     };
     try {
       localStorage.setItem(sessionKey(routine.id), JSON.stringify(session));
     } catch {
       // localStorage lleno — ignorar
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [exerciseLogs, currentExIndex]); // se activa cuando hay progreso real
+  }, [exerciseLogs, currentExIndex, started, finished, routine?.id, startedAt, pausedAccumMs, pausedAt]);
 
   function formatTime(seconds: number) {
     const h = Math.floor(seconds / 3600);
@@ -309,9 +306,10 @@ export function WorkoutMode({ routineId }: { routineId: number }) {
     const safeIndex = Math.min(savedSession.currentExIndex, savedSession.exerciseLogs.length - 1);
     setExerciseLogs(savedSession.exerciseLogs);
     setCurrentExIndex(Math.max(0, safeIndex));
-    setElapsed(savedSession.elapsed);
     setRestDuration(routine.exercises[safeIndex]?.restSeconds ?? 150);
-    startTimeRef.current = new Date(savedSession.startedAt);
+    setStartedAt(savedSession.startedAt);
+    setPausedAccumMs(savedSession.pausedAccumMs ?? 0);
+    setPausedAt(savedSession.pausedAt ?? null);
     setStarted(true);
     setSavedSession(null);
   }
@@ -324,8 +322,23 @@ export function WorkoutMode({ routineId }: { routineId: number }) {
   }
 
   function handleStart() {
+    setStartedAt(Date.now());
+    setPausedAccumMs(0);
+    setPausedAt(null);
     setStarted(true);
-    startTimeRef.current = new Date();
+  }
+
+  function togglePause() {
+    setPausedAt((current) => {
+      if (current === null) {
+        // Begin pause
+        return Date.now();
+      }
+      // End pause — accumulate the time we spent paused
+      const pausedFor = Date.now() - current;
+      setPausedAccumMs((prev) => prev + pausedFor);
+      return null;
+    });
   }
 
   function updateSet(
@@ -403,14 +416,36 @@ export function WorkoutMode({ routineId }: { routineId: number }) {
     const currentWeight =
       currentSet.weight === "" ? 0 : Number(currentSet.weight) || 0;
 
+    // Parse reps as decimal (supports partial reps like 7.5)
+    const rawReps = currentSet.reps;
+    const repsStr = typeof rawReps === "string" ? rawReps.replace(",", ".").trim() : String(rawReps);
+    const currentReps = repsStr === "" ? 0 : parseFloat(repsStr) || 0;
+
+    // Require reps to be entered — placeholder shows target, user must type actual reps
+    if (currentReps <= 0) {
+      toast.error("Anota las reps realizadas antes de marcar la serie.");
+      return;
+    }
+
     // Validar peso 0
     if (currentWeight === 0) {
       const ok = window.confirm("Completar serie sin peso registrado. ¿Continuar?");
       if (!ok) return;
     }
 
-    // Marcar el set como completado
-    updateSet(exIndex, setIndex, "completed", true);
+    // Marcar el set como completado (normalizar peso y reps a número)
+    setExerciseLogs((prev) => {
+      const updated = [...prev];
+      const sets = [...updated[exIndex].sets];
+      sets[setIndex] = {
+        ...sets[setIndex],
+        weight: currentWeight,
+        reps: currentReps,
+        completed: true,
+      };
+      updated[exIndex] = { ...updated[exIndex], sets };
+      return updated;
+    });
 
     // Construir lista de sets completados incluyendo el que acabamos de completar
     // (no leer de exerciseLogs porque el state update aún no se aplicó)
@@ -419,7 +454,7 @@ export function WorkoutMode({ routineId }: { routineId: number }) {
     );
     const completedSets = [
       ...alreadyCompleted,
-      { ...currentSet, completed: true, weight: currentWeight },
+      { ...currentSet, completed: true, weight: currentWeight, reps: currentReps },
     ];
 
     // Verificar PRs con los datos correctos
@@ -501,20 +536,23 @@ export function WorkoutMode({ routineId }: { routineId: number }) {
   }
 
   async function handleFinish() {
-    if (!routine || !startTimeRef.current) return;
+    if (!routine || startedAt === null) return;
+    if (isFinishing) return; // guard against double-tap
+    setIsFinishing(true);
 
-    // Normalize data before saving: convert string weights/reps to numbers, comma→dot
+    // Normalize data before saving. Weight and reps both accept decimals
+    // (user may log partial reps like 7.5).
     const normalizedLogs = exerciseLogs.map((exLog) => ({
       ...exLog,
-      sets: exLog.sets.map((s) => ({
-        ...s,
-        weight: typeof s.weight === "string"
+      sets: exLog.sets.map((s) => {
+        const weightNum = typeof s.weight === "string"
           ? (parseFloat(s.weight.replace(",", ".")) || 0)
-          : s.weight,
-        reps: typeof s.reps === "string"
-          ? (parseInt(s.reps.replace(",", "."), 10) || 0)
-          : s.reps,
-      })),
+          : (s.weight ?? 0);
+        const repsNum = typeof s.reps === "string"
+          ? (parseFloat(s.reps.replace(",", ".")) || 0)
+          : (s.reps ?? 0);
+        return { ...s, weight: weightNum, reps: repsNum };
+      }),
     }));
 
     // Attach RPE recommendations to each exercise before saving
@@ -523,7 +561,7 @@ export function WorkoutMode({ routineId }: { routineId: number }) {
       const completedSets = exLog.sets.filter((s) => s.completed);
       if (completedSets.length === 0) return exLog;
       const setsForEngine: SetAnalysis[] = completedSets.map((s) => ({
-        weight: s.weight === "" ? 0 : Number(s.weight) || 0,
+        weight: Number(s.weight) || 0,
         unit: s.unit ?? "kg",
         reps: s.reps,
         targetReps: routineEx?.reps,
@@ -538,26 +576,48 @@ export function WorkoutMode({ routineId }: { routineId: number }) {
     });
 
     const endTime = new Date();
+    const startDate = new Date(startedAt);
     const log: Omit<WorkoutLog, "id"> = {
       routineId: routine.id!,
       routineName: routine.name,
       date: endTime,
-      startTime: startTimeRef.current,
+      startTime: startDate,
       endTime,
       duration: elapsed,
       completed: true,
       exercises: exercisesWithRecs,
     };
 
+    // Single transaction: workoutLog + any PR updates triggered at save time would go
+    // here together. PRs are already written live in completeSet, so only workoutLogs
+    // participates — but we still wrap it to future-proof and get atomic failure semantics.
     try {
-      const newId = await db.workoutLogs.add(log as WorkoutLog);
-      // Limpiar sesión guardada al terminar con éxito
+      const newId = await db.transaction("rw", db.workoutLogs, async () => {
+        return (await db.workoutLogs.add(log as WorkoutLog)) as number;
+      });
       localStorage.removeItem(sessionKey(routine.id!));
-      setSavedLogId(newId as number);
+      setSavedLogId(newId);
       setFinished(true);
     } catch (err) {
       console.error("Error guardando el entrenamiento:", err);
-      alert("No se pudo guardar el entrenamiento. Intenta de nuevo.");
+      toast.error("No se pudo guardar el entrenamiento.", {
+        description: "Tu progreso sigue seguro. Intenta de nuevo.",
+        duration: 6000,
+      });
+    } finally {
+      setIsFinishing(false);
+    }
+  }
+
+  function handleExitRequest(finishNow: boolean) {
+    setIsExitConfirmOpen(false);
+    if (finishNow) {
+      handleFinish().then(() => {
+        // handleFinish shows the finished screen on success; navigation happens from there
+      });
+    } else {
+      // Leave the session in localStorage so it can be resumed later
+      router.push("/");
     }
   }
 
@@ -728,7 +788,12 @@ ${exerciseLines}
       (acc, ex) => acc + ex.sets.length,
       0,
     );
-    const savedElapsedStr = formatTime(savedSession.elapsed);
+    const savedElapsed = computeElapsed(
+      savedSession.startedAt,
+      savedSession.pausedAccumMs ?? 0,
+      savedSession.pausedAt ?? null,
+    );
+    const savedElapsedStr = formatTime(savedElapsed);
 
     return (
       <div className="flex min-h-dvh flex-col bg-background">
@@ -913,12 +978,11 @@ ${exerciseLines}
   return (
     <div className="flex min-h-dvh flex-col bg-background">
 
-      {/* Rest Timer Overlay */}
+      {/* Rest Timer Overlay — key is stable, restart via signal */}
       {showRest && (
         <RestTimer
-          key={restKey}
-          duration={restDuration}
-          onChangeDuration={setRestDuration}
+          initialDuration={restDuration}
+          restartSignal={restKey}
           onClose={() => setShowRest(false)}
         />
       )}
@@ -929,16 +993,14 @@ ${exerciseLines}
           variant="ghost"
           size="sm"
           className="text-destructive"
-          onClick={() => {
-            if (confirm("¿Salir del entrenamiento?\nTu progreso está guardado y puedes retomarlo desde el Dashboard.")) router.push("/");
-          }}
+          onClick={() => setIsExitConfirmOpen(true)}
         >
           <X className="mr-1 h-4 w-4" />
           Salir
         </Button>
         <div className="flex items-center gap-2">
-          <Timer className="h-4 w-4 text-primary" />
-          <span className="font-mono text-lg font-bold text-foreground">
+          <Timer className={cn("h-4 w-4", paused ? "text-yellow-500" : "text-primary")} />
+          <span className={cn("font-mono text-lg font-bold tabular-nums", paused ? "text-yellow-500" : "text-foreground")}>
             {formatTime(elapsed)}
           </span>
         </div>
@@ -955,7 +1017,7 @@ ${exerciseLines}
             variant="ghost"
             size="icon"
             aria-label={paused ? "Reanudar cronómetro" : "Pausar cronómetro"}
-            onClick={() => setPaused(!paused)}
+            onClick={togglePause}
           >
             {paused ? (
               <Play className="h-5 w-5" aria-hidden="true" />
@@ -1189,13 +1251,20 @@ ${exerciseLines}
                         <Input
                           type="text"
                           inputMode="decimal"
-                          value={set.reps}
-                          onChange={(e) =>
-                            updateSet(flatIndex, si, "reps", e.target.value.replace(",", "."))
-                          }
+                          value={typeof set.reps === "number" ? set.reps : set.reps}
+                          onChange={(e) => {
+                            const raw = e.target.value.replace(",", ".");
+                            if (raw !== "" && !/^\d*\.?\d*$/.test(raw)) return;
+                            updateSet(flatIndex, si, "reps", raw);
+                          }}
                           disabled={isCompleted}
                           aria-label={`Reps serie ${set.setNumber}`}
-                          placeholder="—"
+                          placeholder={(() => {
+                            const routineEx = routine.exercises.find(
+                              (ex) => ex.id === log.exerciseId,
+                            );
+                            return routineEx?.reps ? String(routineEx.reps) : "—";
+                          })()}
                           className="h-9 text-center text-sm"
                         />
                       </div>
@@ -1336,11 +1405,12 @@ ${exerciseLines}
         {overallProgress >= 100 ? (
           <Button
             onClick={handleFinish}
+            disabled={isFinishing}
             className="w-full rounded-xl py-6 text-base font-bold bg-success text-success-foreground hover:bg-success/90"
             size="lg"
           >
             <Square className="mr-2 h-5 w-5" />
-            Finalizar Entrenamiento
+            {isFinishing ? "Guardando..." : "Finalizar Entrenamiento"}
           </Button>
         ) : currentGroup.every((g) => g.log.sets.every((s) => s.completed)) &&
           currentExIndex < groupedLogs.length - 1 ? (
@@ -1377,19 +1447,58 @@ ${exerciseLines}
             <Button
               variant="outline"
               onClick={() => setIsConfirmFinishOpen(false)}
+              disabled={isFinishing}
               className="flex-1"
             >
               Cancelar
             </Button>
             <Button
               variant="destructive"
-              onClick={() => {
+              onClick={async () => {
                 setIsConfirmFinishOpen(false);
-                handleFinish();
+                await handleFinish();
               }}
+              disabled={isFinishing}
               className="flex-1"
             >
-              Sí, terminar
+              {isFinishing ? "Guardando..." : "Sí, terminar"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Confirm Exit Dialog — gives the user the choice to save or leave for later */}
+      <Dialog open={isExitConfirmOpen} onOpenChange={setIsExitConfirmOpen}>
+        <DialogContent className="sm:max-w-sm w-[85vw] rounded-xl z-60">
+          <DialogHeader>
+            <DialogTitle>Salir del entrenamiento</DialogTitle>
+          </DialogHeader>
+          <p className="text-sm text-muted-foreground">
+            ¿Quieres finalizar y guardar este entrenamiento, o salir y retomarlo más tarde?
+          </p>
+          <DialogFooter className="flex-col gap-2 mt-2">
+            <Button
+              onClick={() => handleExitRequest(true)}
+              disabled={isFinishing}
+              className="w-full"
+            >
+              {isFinishing ? "Guardando..." : "Finalizar y guardar"}
+            </Button>
+            <Button
+              variant="outline"
+              onClick={() => handleExitRequest(false)}
+              disabled={isFinishing}
+              className="w-full"
+            >
+              Salir (puedo retomarlo después)
+            </Button>
+            <Button
+              variant="ghost"
+              onClick={() => setIsExitConfirmOpen(false)}
+              disabled={isFinishing}
+              className="w-full"
+            >
+              Cancelar
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -1511,9 +1620,6 @@ ${exerciseLines}
         onOpenChange={setIsCalculatorOpen}
         defaultUnit={currentGroup[0]?.log.sets[0]?.unit || "kg"}
       />
-
-      {/* Spotify Player - Floating widget during workout */}
-      <SpotifyPlayer />
     </div>
   );
 }

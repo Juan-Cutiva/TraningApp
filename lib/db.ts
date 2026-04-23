@@ -289,7 +289,9 @@ export function calculate1RM(
   reps: number | string,
   muscleGroup?: string,
 ): OneRMResult {
-  const repsNum = typeof reps === "string" ? parseInt(reps, 10) || 0 : reps;
+  const repsNum = typeof reps === "string"
+    ? parseFloat(reps.replace(",", ".")) || 0
+    : reps;
 
   if (repsNum <= 0 || !isFinite(weight) || weight <= 0) {
     return {
@@ -417,7 +419,9 @@ export async function checkAndUpdatePRs(
   );
   const maxReps = Math.max(
     ...completedSets.map((s) =>
-      typeof s.reps === "string" ? parseInt(s.reps, 10) || 0 : s.reps,
+      typeof s.reps === "string"
+        ? parseFloat(s.reps.replace(",", ".")) || 0
+        : s.reps,
     ),
   );
 
