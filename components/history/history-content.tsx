@@ -41,7 +41,10 @@ import {
   TrendingUp,
   CalendarOff,
   FileDown,
+  Trash2,
 } from "lucide-react";
+import { toast } from "sonner";
+import { logError } from "@/lib/utils";
 import {
   LineChart,
   Line,
@@ -58,6 +61,37 @@ export function HistoryContent() {
   const [selectedDate, setSelectedDate] = useState<Date | null>(null);
   const [sheetOpen, setSheetOpen] = useState(false);
   const [selectedExercise, setSelectedExercise] = useState<string | null>(null);
+  const [deleting, setDeleting] = useState(false);
+
+  /**
+   * Hard-delete a saved workout. We don't recompute PRs after deletion —
+   * the personalRecords table is intentionally decoupled from individual
+   * workoutLog rows so the historical max survives even if the user prunes
+   * the session that produced it. If a user wants to rebuild PRs from
+   * scratch they should use the "Eliminar todos los datos" zone in
+   * Ajustes.
+   */
+  async function deleteWorkout(id: number, label: string) {
+    if (
+      !confirm(
+        `¿Eliminar este entrenamiento?\n\n${label}\n\nEsta acción no se puede deshacer. Los récords personales (PRs) que ya están registrados no se borran.`,
+      )
+    ) {
+      return;
+    }
+    setDeleting(true);
+    try {
+      await db.workoutLogs.delete(id);
+      toast.success("Entrenamiento eliminado.");
+      setSheetOpen(false);
+      setSelectedDate(null);
+    } catch (err) {
+      logError("deleteWorkout failed", err);
+      toast.error("No se pudo eliminar. Intenta de nuevo.");
+    } finally {
+      setDeleting(false);
+    }
+  }
 
   const allLogs = useLiveQuery(() => db.workoutLogs.reverse().sortBy("date"));
 
@@ -636,6 +670,35 @@ export function HistoryContent() {
                     </div>
                   ))}
                 </div>
+
+                {/* Delete workout — destructive action at the end of the
+                    sheet so it's not the first thing the user reaches. */}
+                {selectedDayLog.id != null && (
+                  <div className="mt-6 pt-4 border-t border-border/40">
+                    <Button
+                      variant="outline"
+                      onClick={() =>
+                        deleteWorkout(
+                          selectedDayLog.id!,
+                          `${selectedDayLog.routineName} — ${format(
+                            new Date(selectedDayLog.date),
+                            "d 'de' MMMM",
+                            { locale: es },
+                          )}`,
+                        )
+                      }
+                      disabled={deleting}
+                      className="w-full gap-2 text-destructive border-destructive/30 hover:bg-destructive/10"
+                    >
+                      <Trash2 className="h-4 w-4" />
+                      {deleting ? "Eliminando..." : "Eliminar entrenamiento"}
+                    </Button>
+                    <p className="text-[10px] text-muted-foreground/70 mt-2 text-center">
+                      Los PRs ya registrados no se borran. Para reset total
+                      usa Ajustes → Eliminar todos los datos.
+                    </p>
+                  </div>
+                )}
               </div>
             ) : (
               <div className="flex flex-col items-center py-10 text-center">

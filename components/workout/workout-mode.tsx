@@ -620,31 +620,63 @@ export function WorkoutMode({ routineId }: { routineId: number }) {
       { ...currentSet, completed: true, weight: currentWeight, reps: currentReps },
     ];
 
-    // Compute potential PRs for the live toast — they are NOT persisted here.
-    // Persistence happens atomically inside handleFinish's transaction so PRs
-    // can't end up in Dexie without the workoutLog that produced them.
+    // Compute potential PRs against the DB. Note: PRs are NOT persisted here
+    // (that happens atomically in handleFinish's transaction so PRs can't
+    // end up orphaned if the log save later fails). Because of that, every
+    // call to computeNewPRs sees the SAME stale DB state, so a 60 kg max
+    // beating an existing 55 kg DB-PR keeps "winning" on every set within
+    // the session. We dedupe against `sessionPRsRef` so the toast only
+    // fires when the value goes STRICTLY UP relative to the previous alert.
     const prs = await computeNewPRs(
       exLog.exerciseName,
       completedSets,
       exLog.muscleGroup,
     );
-    // Track the latest per-exercise PRs in a session ref so handleFinish can
-    // persist them without recomputing all exercises at save time.
+
+    const prevSessionPRs = sessionPRsRef.current.get(exLog.exerciseName) ?? [];
+    const trulyNewPRs = prs.filter((newPR) => {
+      const prev = prevSessionPRs.find((p) => p.type === newPR.type);
+      if (!prev) return true; // first time this PR type triggers in the session
+      return newPR.value > prev.value; // strictly better than the last alert
+    });
+
+    // Always update the ref so the next set compares against the latest seen
+    // values, not the original DB ones. handleFinish recomputes from final
+    // normalized data anyway, so this ref is purely for live toast dedup.
     if (prs.length > 0) {
       sessionPRsRef.current.set(exLog.exerciseName, prs);
     }
-    if (prs.length > 0) {
-      prs.forEach((p, i) => {
+
+    if (trulyNewPRs.length > 0) {
+      trulyNewPRs.forEach((p, i) => {
         scheduleTimer(() => {
+          // Per-type label so the user can distinguish weight vs reps vs 1RM
+          // when multiple PRs land in the same set.
+          const typeLabel =
+            p.type === "weight"
+              ? "Peso máximo"
+              : p.type === "reps"
+                ? "Reps máximas"
+                : "1RM estimado";
+          // Cleaner detail string for 1RM PRs — the original "(media)"
+          // referred to the fiabilidad field which read as ambiguous.
+          const detailText =
+            p.type === "1rm"
+              ? `~${p.value} ${p.unit ?? "kg"} (1RM estimado)`
+              : p.details;
           toast.custom(() => (
             <div className="flex items-center gap-3 rounded-2xl border border-yellow-500/30 bg-card px-4 py-3 shadow-2xl">
               <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-yellow-500/15">
                 <Trophy className="h-5 w-5 text-yellow-500" />
               </div>
               <div className="min-w-0">
-                <p className="text-[11px] font-bold uppercase tracking-wider text-yellow-500">¡Nuevo Récord!</p>
-                <p className="truncate text-sm font-semibold text-foreground">{p.exerciseName}</p>
-                <p className="text-xs text-muted-foreground">{p.details}</p>
+                <p className="text-[11px] font-bold uppercase tracking-wider text-yellow-500">
+                  ¡Nuevo Récord! · {typeLabel}
+                </p>
+                <p className="truncate text-sm font-semibold text-foreground">
+                  {p.exerciseName}
+                </p>
+                <p className="text-xs text-muted-foreground">{detailText}</p>
               </div>
             </div>
           ), { duration: 4500, position: "top-center" });
@@ -668,25 +700,52 @@ export function WorkoutMode({ routineId }: { routineId: number }) {
   }
 
   async function saveManualWeight() {
-    if (!routine || currentGroup.length === 0) return;
+    if (!routine || routine.id == null) {
+      toast.error("No se pudo identificar la rutina.");
+      return;
+    }
+    if (currentGroup.length === 0) {
+      toast.error("No hay un ejercicio seleccionado.");
+      return;
+    }
 
-    const weight = parseFloat(manualWeight) || 0;
+    const weight = parseFloat(manualWeight.replace(",", "."));
+    if (!isFinite(weight) || weight < 0) {
+      toast.error("Ingresa un peso válido.");
+      return;
+    }
 
-    // Determine which exercise to update: swapIndex for supersets, otherwise the only exercise
+    // Resolve target exercise. Prefer swapIndex (set when the user opened
+    // the dialog from a specific exercise — works for both single ex and
+    // superset variants) and only fall back to the first exercise of the
+    // current group when swapIndex was never set. Validate the index points
+    // at a real log entry to avoid silent writes to the wrong exercise.
     const targetFlatIndex =
-      swapIndex !== null ? swapIndex : currentGroup[0]?.index ?? 0;
+      swapIndex !== null && swapIndex >= 0 && swapIndex < exerciseLogs.length
+        ? swapIndex
+        : currentGroup[0]?.index ?? -1;
     const targetLog = exerciseLogs[targetFlatIndex];
+    if (!targetLog) {
+      toast.error("No se pudo guardar — ejercicio no encontrado.");
+      return;
+    }
 
     const updatedExercises = routine.exercises.map((ex) => {
-      if (ex.id === targetLog?.exerciseId) {
+      if (ex.id === targetLog.exerciseId) {
         return { ...ex, targetWeight: weight, unit: manualUnit };
       }
       return ex;
     });
 
-    await db.routines.update(routine.id!, { exercises: updatedExercises });
+    try {
+      await db.routines.update(routine.id, { exercises: updatedExercises });
+    } catch (err) {
+      logError("saveManualWeight failed", err);
+      toast.error("No se pudo guardar el peso. Intenta de nuevo.");
+      return;
+    }
 
-    // Update live exerciseLogs: only the selected exercise
+    // Update live exerciseLogs: only the selected exercise's incomplete sets
     setExerciseLogs((prev) => {
       if (targetFlatIndex < 0 || targetFlatIndex >= prev.length) return prev;
       const updated = [...prev];
@@ -699,9 +758,11 @@ export function WorkoutMode({ routineId }: { routineId: number }) {
       return updated;
     });
 
+    toast.success(`Peso base guardado: ${weight} ${manualUnit}`);
     setWeightUpdated(true);
     setIsSaveWeightOpen(false);
     setManualWeight("");
+    setSwapIndex(null); // reset shared swapIndex so it can't leak into other dialogs
     scheduleTimer(() => setWeightUpdated(false), 2000);
   }
 
@@ -1807,7 +1868,15 @@ ${exerciseLines}
       </Dialog>
 
       {/* Swap Exercise Dialog */}
-      <Dialog open={isSwapOpen} onOpenChange={setIsSwapOpen}>
+      <Dialog
+        open={isSwapOpen}
+        onOpenChange={(open) => {
+          setIsSwapOpen(open);
+          // Reset shared swapIndex on close so it can't leak into the
+          // Guardar Peso dialog if the user opens that next.
+          if (!open) setSwapIndex(null);
+        }}
+      >
         <DialogContent className="sm:max-w-md w-[90vw] rounded-xl z-60">
           <DialogHeader>
             <DialogTitle>Sustituir Ejercicio</DialogTitle>
@@ -1865,7 +1934,18 @@ ${exerciseLines}
       </Dialog>
 
       {/* Save Weight Dialog */}
-      <Dialog open={isSaveWeightOpen} onOpenChange={setIsSaveWeightOpen}>
+      <Dialog
+        open={isSaveWeightOpen}
+        onOpenChange={(open) => {
+          setIsSaveWeightOpen(open);
+          if (!open) {
+            // Reset transient inputs so the next open is clean and the shared
+            // swapIndex doesn't leak into the Sustituir dialog.
+            setManualWeight("");
+            setSwapIndex(null);
+          }
+        }}
+      >
         <DialogContent className="sm:max-w-md w-[90vw] rounded-xl z-60">
           <DialogHeader>
             <DialogTitle>Guardar Peso Base</DialogTitle>
